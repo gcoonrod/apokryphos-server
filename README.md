@@ -6,7 +6,7 @@ A zero-trust, "blind" block-storage server for end-to-end encrypted client vault
 
 apokryphos-server is the API tier of a self-hostable, zero-trust file vault. The server is deliberately **blind**: it never receives, processes, persists, or transmits unencrypted user data, plaintext file names, or any material sufficient to decrypt user content. All cryptographic operations happen in the client; the server is a high-availability bucket for opaque, fixed-size cypher-blocks. There is no password recovery, no key escrow, no administrative decryption path — if a client loses its key, the only administrative action available is a destructive quota-resetting purge of the affected vault.
 
-This repository is in **Phase 1: scaffolding**. The Rust binary compiles and runs but ships no functional application logic, route handlers, authentication flows, persistence operations, or cryptographic execution. Phase 2+ will add those, gated by the project [constitution](.specify/memory/constitution.md).
+This repository is in **Phase 1: scaffolding**. The Rust binary compiles and runs but ships no functional application logic, route handlers, authentication flows, persistence operations, or cryptographic execution. Phase 2+ will add those, gated by five non-negotiable design principles: zero-trust / blind server, side-channel resistance, stateless single-binary architecture, FAPI 2.0 + DPoP authentication, and a client-authoritative manifest contract.
 
 ## Repository layout
 
@@ -14,7 +14,6 @@ This repository is in **Phase 1: scaffolding**. The Rust binary compiles and run
 - **`clients/vault-spa/`** — placeholder for the reference end-user vault SPA.
 - **`clients/admin-spa/`** — placeholder for the administrative management SPA.
 - **`deploy/`** — placeholder for reverse-proxy and container deployment configuration.
-- **`specs/`** — Spec-Driven Development artifacts: feature specifications, plans, research notes, and tasks. See `specs/001-monorepo-scaffolding/` for the spec governing this phase.
 
 ## Build the server
 
@@ -54,4 +53,3 @@ These versions were last validated on **2026-05-14**. Contributors using newer m
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — the planned 3-tier topology (reverse proxy → Rust API → decoupled SPAs).
 - **[SECURITY.md](./SECURITY.md)** — how to privately report a vulnerability via GitHub Private Security Advisories.
 - **[LICENSE](./LICENSE)** — license terms.
-- **[`.specify/memory/constitution.md`](./.specify/memory/constitution.md)** — the project's non-negotiable principles (zero-trust, side-channel resistance, statelessness, FAPI 2.0 + DPoP, client-authoritative contract).
