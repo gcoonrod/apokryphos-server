@@ -7,7 +7,7 @@ rust-version = "1.95"
 [dependencies]
 axum = "0.8"
 openidconnect = "4.0"
-rusqlite = "0.39"
+rusqlite = { version = "0.39", features = ["bundled"] }
 serde = "1.0"
 tokio = "1.52"
 tracing = "0.1"

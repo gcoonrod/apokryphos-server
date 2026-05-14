@@ -25,7 +25,7 @@ All traffic from the user is terminated at the reverse proxy. The proxy serves s
 
 ### 1. Reverse proxy
 
-The reverse proxy is the user-facing component. It terminates TLS (the Rust API tier does not implement TLS itself), serves the two SPA bundles as static assets, and forwards `/api/...` requests to the Rust API tier. The proxy is also where FAPI 2.0–mandated TLS configuration lives.
+The reverse proxy is the user-facing component. It terminates TLS (the Rust API tier does not implement TLS itself), serves the two SPA bundles as static assets, and forwards the full API surface — `/api/...`, `/manifest`, and the FAPI 2.0 + DPoP authentication endpoints — to the Rust API tier. The proxy is also where FAPI 2.0–mandated TLS configuration lives.
 
 Because the Rust API tier honors `X-Forwarded-For` and `X-Forwarded-Proto`, the proxy is responsible for setting those headers correctly and only for trusted upstream connections. Proxy trust configuration is part of the deployment artifacts. The binding rules: the default configuration MUST refuse forwarded headers from unknown sources, the upstream IP allowlist (or equivalent trust-boundary control) MUST be explicit and documented, and the server MUST NOT mandate native mTLS — TLS termination at the edge proxy is the supported deployment model.
 
