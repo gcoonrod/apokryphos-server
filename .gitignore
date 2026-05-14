@@ -19,6 +19,7 @@ CLAUDE.md
 .claude/
 .specify/
 specs/
+.remember/
 
 # Local scratch directory
 tmp/
