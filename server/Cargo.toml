@@ -5,10 +5,16 @@ edition = "2024"
 rust-version = "1.95"
 
 [features]
-# Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel).
-# Every integration test under server/tests/ declares required-features = ["test-utils"].
-# Never enabled in release builds.
-test-utils = []
+# Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel,
+# auth::testing::*). Every integration test under server/tests/ declares
+# required-features = ["test-utils"]. Never enabled in release builds.
+#
+# Phase 3: the auth::testing helpers need ephemeral key generation (rsa, p256, rand,
+# rand_chacha). These are optional dependencies activated only when test-utils is on —
+# they're absent from the release binary. This pattern is required because Cargo's
+# [dev-dependencies] are not visible to the lib crate itself, only to test/example/bench
+# targets, so test-utils-gated lib code cannot rely on [dev-dependencies].
+test-utils = ["dep:rsa", "dep:p256", "dep:rand", "dep:rand_chacha"]
 
 [dependencies]
 # Phase 3 (FAPI 2.0 + DPoP auth core) — see specs/003-fapi-dpop-auth-core/plan.md
@@ -21,6 +27,15 @@ ipnet = "2.10"
 jsonwebtoken = "9"
 openidconnect = "4.0"
 parking_lot = "0.12"
+# Phase 3 test-utils-gated optional deps. Activated only by the `test-utils`
+# Cargo feature (see [features] above) so the production binary still excludes
+# all key-generation code paths. These must be regular [dependencies] (not
+# [dev-dependencies]) because [dev-dependencies] are invisible to the lib
+# crate itself, which is where `auth::testing` lives behind `cfg(feature = "test-utils")`.
+p256 = { version = "0.13", features = ["ecdsa"], optional = true }
+rand = { version = "0.8", optional = true }
+rand_chacha = { version = "0.3", optional = true }
+rsa = { version = "0.9", optional = true }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
@@ -33,12 +48,6 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 url = "2"
 
 [dev-dependencies]
-# Phase 3 dev-only — ephemeral keypair generation for the in-process OIDC mock
-# (production never generates keys); trybuild for the subject-isolation compile-fail tests.
-p256 = { version = "0.13", features = ["ecdsa"] }
-rand = "0.8"
-rand_chacha = "0.3"
-rsa = "0.9"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"

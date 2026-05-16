@@ -61,6 +61,25 @@ pub enum ConfigError {
     #[error("drain_timeout_secs must be a positive integer, got {value:?}")]
     InvalidDrainTimeout { value: String },
 
+    #[error("auth.{key} must be a positive integer, got {value:?}")]
+    InvalidAuthDurationSecs {
+        key: &'static str,
+        value: String,
+    },
+
+    #[error("auth.max_replay_entries must be an integer >= 1024, got {value:?}")]
+    InvalidAuthMaxReplayEntries { value: String },
+
+    #[error(
+        "auth.jti_replay_window_secs ({window}) must be >= auth.dpop_freshness_secs ({freshness}) + auth.clock_skew_secs ({skew}) = {required}"
+    )]
+    AuthReplayWindowTooSmall {
+        window: u64,
+        freshness: u64,
+        skew: u64,
+        required: u64,
+    },
+
     #[error("failed to read config file at {path:?}: {source}")]
     FileRead {
         path: PathBuf,

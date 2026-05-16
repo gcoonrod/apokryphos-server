@@ -59,6 +59,15 @@ pub enum AppError {
 
     #[error("serve error during request handling: {0}")]
     Serve(#[source] io::Error),
+
+    /// Phase 3 auth subsystem startup failure: discovery or JWKS fetch
+    /// failed, JWKS was empty, or the two contexts' JWKS overlapped at
+    /// startup (FR-002, FR-006). Carries a typed `auth::context::ContextInitError`
+    /// once that type lands in Phase 3 US1 (T018). Declared here as
+    /// `String` in Phase 2 so the variant exists for the FR-002/FR-006
+    /// exit-non-zero path; T028 will retype it to the typed error.
+    #[error("auth subsystem initialization failed: {0}")]
+    Auth(String),
 }
 
 /// Production entry point. Returns `Err` for config-load / bind / serve

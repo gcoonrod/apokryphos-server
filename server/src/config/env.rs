@@ -22,6 +22,9 @@ pub struct PartialConfig {
     pub drain_timeout_secs: Option<toml::Value>,
     pub vault_oidc: Option<PartialOidc>,
     pub admin_oidc: Option<PartialOidc>,
+    /// Phase 3 — optional `[auth]` block carrying tuning knobs for the
+    /// FAPI 2.0 + DPoP authentication core. Absent → all defaults apply.
+    pub auth: Option<PartialAuth>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -29,6 +32,22 @@ pub struct PartialConfig {
 pub struct PartialOidc {
     pub issuer_url: Option<String>,
     pub audience: Option<String>,
+}
+
+/// Partial `[auth]` block. Every field is optional; absent → use the
+/// corresponding `AuthConfig::default()` value. Values come in as
+/// `toml::Value` so the env-form (string) and TOML-form (integer) paths
+/// can both be parsed by the same validator.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PartialAuth {
+    pub clock_skew_secs: Option<toml::Value>,
+    pub dpop_freshness_secs: Option<toml::Value>,
+    pub jwks_refresh_secs: Option<toml::Value>,
+    pub discovery_refresh_secs: Option<toml::Value>,
+    pub on_demand_refresh_min_interval_secs: Option<toml::Value>,
+    pub jti_replay_window_secs: Option<toml::Value>,
+    pub max_replay_entries: Option<toml::Value>,
 }
 
 /// `trusted_proxies` accepts either a TOML array (file form) or a
@@ -85,6 +104,34 @@ pub fn collect_env(env: &BTreeMap<String, String>) -> PartialConfig {
     }
     if admin.issuer_url.is_some() || admin.audience.is_some() {
         p.admin_oidc = Some(admin);
+    }
+
+    // Phase 3 — `[auth]` block (FAPI 2.0 + DPoP tuning knobs).
+    // Env vars map under the `APOK_AUTH_*` prefix per the Phase 2 R14 rule.
+    let mut auth = PartialAuth::default();
+    let mut any_auth_field = false;
+    for (env_key, target) in [
+        ("APOK_AUTH_CLOCK_SKEW_SECS", &mut auth.clock_skew_secs),
+        ("APOK_AUTH_DPOP_FRESHNESS_SECS", &mut auth.dpop_freshness_secs),
+        ("APOK_AUTH_JWKS_REFRESH_SECS", &mut auth.jwks_refresh_secs),
+        ("APOK_AUTH_DISCOVERY_REFRESH_SECS", &mut auth.discovery_refresh_secs),
+        (
+            "APOK_AUTH_ON_DEMAND_REFRESH_MIN_INTERVAL_SECS",
+            &mut auth.on_demand_refresh_min_interval_secs,
+        ),
+        (
+            "APOK_AUTH_JTI_REPLAY_WINDOW_SECS",
+            &mut auth.jti_replay_window_secs,
+        ),
+        ("APOK_AUTH_MAX_REPLAY_ENTRIES", &mut auth.max_replay_entries),
+    ] {
+        if let Some(v) = env.get(env_key) {
+            *target = Some(toml::Value::String(v.clone()));
+            any_auth_field = true;
+        }
+    }
+    if any_auth_field {
+        p.auth = Some(auth);
     }
 
     p

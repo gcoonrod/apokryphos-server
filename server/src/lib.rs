@@ -3,9 +3,14 @@
 //! `main.rs` is the only binary entry point; integration tests under `server/tests/`
 //! consume this lib surface to exercise modules without spawning the binary.
 //!
-//! `auth/` and `storage/` are intentionally NOT re-exported. They are Phase 1
-//! placeholders held for Phase 3 (FAPI 2.0 + DPoP) and Phase 4 (storage backend).
-//! A future PR introducing public items there must update this comment.
+//! ## Module status
+//!
+//! - `auth/` (Phase 3): live. Hosts the FAPI 2.0 + DPoP authentication
+//!   core. Phase 2 lands the scaffolding (`crypto`, `failure`, `subject`,
+//!   `replay`, `testing`); Phase 3 fills in `context`, `discovery`, `dpop`,
+//!   `jwks`, `middleware`, `token`. See `specs/003-fapi-dpop-auth-core/`.
+//! - `cli/` (Phase 3): live. Hosts the `--log-level` CLI flag (FR-033a).
+//! - `storage/` (Phase 4): still a placeholder, NOT re-exported.
 //!
 //! ## Target platform
 //!
@@ -24,6 +29,8 @@ compile_error!(
      non-Unix platforms. See the crate-level docs for rationale."
 );
 
+pub mod auth;
+pub mod cli;
 pub mod config;
 pub mod logging;
 pub mod proxy_trust;

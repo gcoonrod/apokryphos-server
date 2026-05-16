@@ -86,6 +86,12 @@ pub fn minimal_valid_config() -> ServerConfig {
         )
         .expect("test fixture: admin OIDC config"),
         drain_timeout: Duration::from_secs(30),
+        // Phase 3 (T008): AuthConfig defaults — every Phase 2 fixture
+        // uses production-correct defaults, so callers that don't care
+        // about auth tuning inherit them transparently. Tests that need
+        // shorter values (e.g. `auth_jwks_refresh_*`) override via the
+        // builder pattern.
+        auth: apokryphos_server::config::AuthConfig::default(),
     }
 }
 
