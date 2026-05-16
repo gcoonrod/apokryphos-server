@@ -226,6 +226,62 @@ fn invalid_issuer_url_rejected() {
 }
 
 #[test]
+fn issuer_url_http_scheme_rejected() {
+    let mut env = full_env();
+    env.insert(
+        "APOK_VAULT_OIDC_ISSUER_URL".into(),
+        "http://issuer.invalid/v".into(),
+    );
+    let err = load_from(env, None).expect_err("http scheme should fail per OIDC Discovery 1.0");
+    assert!(matches!(
+        err,
+        ConfigError::InvalidIssuerUrlScheme { audience: "vault", ref scheme, .. } if scheme == "http"
+    ));
+}
+
+#[test]
+fn issuer_url_mailto_scheme_rejected() {
+    let mut env = full_env();
+    env.insert(
+        "APOK_VAULT_OIDC_ISSUER_URL".into(),
+        "mailto:issuer@example.com".into(),
+    );
+    let err = load_from(env, None).expect_err("non-https scheme should fail");
+    assert!(matches!(
+        err,
+        ConfigError::InvalidIssuerUrlScheme { audience: "vault", ref scheme, .. } if scheme == "mailto"
+    ));
+}
+
+#[test]
+fn issuer_url_with_query_rejected() {
+    let mut env = full_env();
+    env.insert(
+        "APOK_VAULT_OIDC_ISSUER_URL".into(),
+        "https://issuer.invalid/v?foo=bar".into(),
+    );
+    let err = load_from(env, None).expect_err("query component should fail");
+    assert!(matches!(
+        err,
+        ConfigError::IssuerUrlHasComponent { audience: "vault", component: "query", .. }
+    ));
+}
+
+#[test]
+fn issuer_url_with_fragment_rejected() {
+    let mut env = full_env();
+    env.insert(
+        "APOK_ADMIN_OIDC_ISSUER_URL".into(),
+        "https://issuer.invalid/a#frag".into(),
+    );
+    let err = load_from(env, None).expect_err("fragment component should fail");
+    assert!(matches!(
+        err,
+        ConfigError::IssuerUrlHasComponent { audience: "admin", component: "fragment", .. }
+    ));
+}
+
+#[test]
 fn invalid_drain_timeout_rejected() {
     let mut env = full_env();
     env.insert("APOK_DRAIN_TIMEOUT_SECS".into(), "0".into());

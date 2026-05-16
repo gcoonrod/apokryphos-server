@@ -38,6 +38,20 @@ pub enum ConfigError {
         source: url::ParseError,
     },
 
+    #[error("{audience}_oidc.issuer_url {value:?} must use scheme \"https\" per OIDC Discovery 1.0, got {scheme:?}")]
+    InvalidIssuerUrlScheme {
+        audience: &'static str,
+        value: String,
+        scheme: String,
+    },
+
+    #[error("{audience}_oidc.issuer_url {value:?} must not include a {component} component per OIDC Discovery 1.0")]
+    IssuerUrlHasComponent {
+        audience: &'static str,
+        value: String,
+        component: &'static str,
+    },
+
     #[error("{audience}_oidc.audience is empty")]
     EmptyAudience { audience: &'static str },
 
