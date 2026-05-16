@@ -30,7 +30,7 @@ use tower::{Layer, Service};
 
 use crate::auth::context::OidcContext;
 use crate::auth::dpop::validate_proof;
-use crate::auth::failure::{AuthFailure, respond_401, respond_503_memory_pressure};
+use crate::auth::failure::{AuthFailure, log_failure, respond_401, respond_503_memory_pressure};
 use crate::auth::replay::JtiReplayStore;
 use crate::auth::subject::{VaultSubject, VaultSubjectExtension};
 use crate::auth::token::validate_token;
@@ -89,18 +89,42 @@ where
     fn call(&mut self, mut request: Request) -> Self::Future {
         let ctx = Arc::clone(&self.ctx);
         let replay = Arc::clone(&self.replay);
-        // `Service::call` takes `&mut self` but the future needs `Send +
-        // 'static`. Clone the inner service into the future per the
-        // standard tower pattern.
-        let mut inner = self.inner.clone();
+        // Canonical tower "replace-with-clone" pattern. `poll_ready` was
+        // driven on `self.inner`; that readiness is consumed by `call` and
+        // belongs to *that* instance. We move the ready instance into the
+        // future via `mem::replace`, leaving a fresh clone in `self.inner`
+        // for the next `poll_ready`/`call` cycle. Simply cloning before
+        // calling would invoke a clone whose readiness state is unknown —
+        // a Service-contract violation for any non-always-ready inner.
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
         Box::pin(async move {
+            // Capture the effective client address up front; we need it
+            // both for the success path (request extensions remain intact)
+            // and for the failure log emission.
+            let client_addr = request
+                .extensions()
+                .get::<EffectiveAddress>()
+                .map(|e| e.addr)
+                .unwrap_or_else(|| std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
             match authenticate_vault(&mut request, &ctx, &replay).await {
                 Ok(subject) => {
                     request.extensions_mut().insert(VaultSubjectExtension(subject));
                     inner.call(request).await
                 }
-                Err(AuthFailure::MemoryPressure) => Ok(respond_503_memory_pressure()),
-                Err(_other) => Ok(respond_401()),
+                Err(failure) => {
+                    // FR-033: emit a category-bearing DEBUG event before
+                    // collapsing to the uniform 401/503 response. The
+                    // event carries the failure category + effective
+                    // client address — never the raw token, proof,
+                    // or jti (FR-031, FR-032).
+                    log_failure(&failure, client_addr);
+                    match failure {
+                        AuthFailure::MemoryPressure => Ok(respond_503_memory_pressure()),
+                        _ => Ok(respond_401()),
+                    }
+                }
             }
         })
     }
@@ -114,17 +138,23 @@ async fn authenticate_vault(
     replay: &JtiReplayStore,
 ) -> Result<VaultSubject, AuthFailure> {
     // ── Extract Authorization: DPoP <token> ─────────────────────────────
+    // RFC 9110 §11.1: HTTP authentication scheme tokens are case-insensitive.
+    // Split on the first ASCII space; compare the scheme via
+    // `eq_ignore_ascii_case`. Handles all 32 ASCII-case combinations of
+    // "DPoP" (`DPoP`, `dpop`, `DPOP`, `Dpop`, `dPoP`, …) in one branch.
     let auth_value = request
         .headers()
         .get(AUTHORIZATION)
         .ok_or(AuthFailure::MissingToken)?
         .to_str()
         .map_err(|_| AuthFailure::MissingToken)?;
-    let raw_token = auth_value
-        .strip_prefix("DPoP ")
-        .or_else(|| auth_value.strip_prefix("dpop "))
-        .ok_or(AuthFailure::MissingToken)?
-        .trim();
+    let (scheme, rest) = auth_value
+        .split_once(' ')
+        .ok_or(AuthFailure::MissingToken)?;
+    if !scheme.eq_ignore_ascii_case("DPoP") {
+        return Err(AuthFailure::MissingToken);
+    }
+    let raw_token = rest.trim();
     if raw_token.is_empty() {
         return Err(AuthFailure::MissingToken);
     }

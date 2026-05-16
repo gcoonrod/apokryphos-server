@@ -93,8 +93,21 @@ pub async fn run() -> Result<(), AppError> {
     let drain_timeout = cfg.drain_timeout;
 
     // Phase 3 US1 vault-context init (FR-002, FR-006).
+    //
+    // The startup OIDC fetches (discovery + JWKS) MUST fail fast rather
+    // than hang the binary. `reqwest::Client::new()` imposes no
+    // request/read timeout — only an OS connect timeout — so a stalling
+    // issuer would block `run()` before `bind` and `emit_server_started`.
+    // We build the client with an explicit 30-second total request
+    // timeout. A follow-on task can promote this to an `AuthConfig`
+    // knob (e.g. `oidc_http_timeout_secs`) when configurability
+    // matters; for now 30s is a defensive default that catches
+    // pathological providers without breaking sane ones.
     let auth_cfg = Arc::new(cfg.auth.clone());
-    let http_client = openidconnect::reqwest::Client::new();
+    let http_client = openidconnect::reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| AppError::Auth(format!("failed to build OIDC HTTP client: {e}")))?;
     let vault_ctx = crate::auth::init_single_context(
         crate::auth::AudienceTag::Vault,
         &cfg.vault_oidc,

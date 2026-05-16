@@ -21,7 +21,17 @@ use openidconnect::reqwest;
 use serde::Deserialize;
 use url::Url;
 
-const DISCOVERY_PATH: &str = "/.well-known/openid-configuration";
+/// Suffix to append to the issuer URL per OIDC Discovery 1.0 §4.
+///
+/// Note the absence of a leading `/`. `url::Url::join` follows RFC 3986
+/// §5.2.2: an absolute-path reference (one that starts with `/`) replaces
+/// the entire path of the base. For a path-based issuer like
+/// `https://idp.example/tenant`, joining `/.well-known/openid-configuration`
+/// would silently drop the `/tenant` segment and fetch from the wrong
+/// tenant. We therefore construct the discovery URL via explicit string
+/// concatenation (trim trailing slash + append the well-known suffix)
+/// and then re-parse, which preserves the issuer's full path.
+const DISCOVERY_SUFFIX: &str = "/.well-known/openid-configuration";
 
 /// Parsed OIDC discovery document. Only `jwks_uri` is retained; every other
 /// field is intentionally discarded (FR-003a + FR-012).
@@ -70,13 +80,19 @@ pub async fn fetch_discovery(
     http_client: &reqwest::Client,
     issuer_url: &Url,
 ) -> Result<Discovery, DiscoveryFetchError> {
+    // Build the discovery URL by string concatenation rather than
+    // `Url::join`. See `DISCOVERY_SUFFIX`'s doc comment for the
+    // path-preservation rationale.
+    let raw = format!(
+        "{}{}",
+        issuer_url.as_str().trim_end_matches('/'),
+        DISCOVERY_SUFFIX
+    );
     let discovery_url =
-        issuer_url
-            .join(DISCOVERY_PATH)
-            .map_err(|source| DiscoveryFetchError::UrlBuild {
-                issuer: issuer_url.to_string(),
-                source,
-            })?;
+        Url::parse(&raw).map_err(|source| DiscoveryFetchError::UrlBuild {
+            issuer: issuer_url.to_string(),
+            source,
+        })?;
 
     let response = http_client.get(discovery_url).send().await?;
     let status = response.status();
@@ -106,13 +122,52 @@ pub async fn fetch_discovery(
 mod tests {
     use super::*;
 
+    /// Helper: replicate the URL-construction logic from `fetch_discovery`
+    /// so we can unit-test path preservation without spinning up an HTTP
+    /// client.
+    fn build_discovery_url(issuer: &str) -> Url {
+        let issuer_url = Url::parse(issuer).unwrap();
+        let raw = format!(
+            "{}{}",
+            issuer_url.as_str().trim_end_matches('/'),
+            DISCOVERY_SUFFIX
+        );
+        Url::parse(&raw).unwrap()
+    }
+
     #[test]
-    fn url_join_appends_discovery_path() {
-        let issuer = Url::parse("https://idp.example.invalid").unwrap();
-        let joined = issuer.join(DISCOVERY_PATH).unwrap();
+    fn discovery_url_appends_to_root_issuer() {
         assert_eq!(
-            joined.as_str(),
+            build_discovery_url("https://idp.example.invalid").as_str(),
             "https://idp.example.invalid/.well-known/openid-configuration"
+        );
+    }
+
+    #[test]
+    fn discovery_url_appends_to_root_issuer_with_trailing_slash() {
+        assert_eq!(
+            build_discovery_url("https://idp.example.invalid/").as_str(),
+            "https://idp.example.invalid/.well-known/openid-configuration"
+        );
+    }
+
+    /// Regression test for the path-drop bug surfaced in PR #4 review:
+    /// `Url::join("/.well-known/openid-configuration")` would silently
+    /// replace `/tenant` with `/.well-known/...`. The string-concat
+    /// construction preserves the path.
+    #[test]
+    fn discovery_url_preserves_path_based_issuer() {
+        assert_eq!(
+            build_discovery_url("https://idp.example.invalid/tenant").as_str(),
+            "https://idp.example.invalid/tenant/.well-known/openid-configuration"
+        );
+    }
+
+    #[test]
+    fn discovery_url_preserves_path_based_issuer_with_trailing_slash() {
+        assert_eq!(
+            build_discovery_url("https://idp.example.invalid/tenant/").as_str(),
+            "https://idp.example.invalid/tenant/.well-known/openid-configuration"
         );
     }
 

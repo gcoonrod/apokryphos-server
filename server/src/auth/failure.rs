@@ -13,6 +13,8 @@
 //! the failure category name (not the variant data) to a `tracing::debug!`
 //! event.
 
+use std::net::IpAddr;
+
 use axum::body::Body;
 use axum::http::{Response, StatusCode, header};
 
@@ -56,7 +58,6 @@ pub(in crate::auth) enum AuthFailure {
 
 impl AuthFailure {
     /// Short category name for the structured-log `category` field.
-    #[allow(dead_code)] // consumed by US1 log_failure helper
     pub(in crate::auth) fn category(&self) -> &'static str {
         match self {
             Self::MissingToken => "auth.token.missing",
@@ -96,6 +97,27 @@ pub fn respond_401() -> Response<Body> {
         .header(header::CONTENT_LENGTH, "0")
         .body(Body::empty())
         .expect("static 401 response builder is infallible")
+}
+
+/// Emit a structured `DEBUG`-level tracing event for an authentication
+/// failure (FR-033). Carries the category name and the effective client
+/// address (as resolved by Phase 2's proxy-trust middleware) — NEVER the
+/// raw token, raw proof, or `jti` value (FR-031, FR-032). Specific
+/// `AuthFailure` claim-name payloads (`TokenMissingClaim(name)` etc.) are
+/// flattened into the category string by `category()`; the offending
+/// claim name itself is `&'static str` so logging it carries no
+/// secret-bearing payload.
+///
+/// The `MAY` modality from FR-033 means operators can choose to filter
+/// these out by running at `--log-level WARN` or higher; the events
+/// remain useful at the default `INFO` level (which suppresses DEBUG)
+/// only for active troubleshooting.
+pub(in crate::auth) fn log_failure(failure: &AuthFailure, effective_address: IpAddr) {
+    tracing::debug!(
+        category = failure.category(),
+        client = %effective_address,
+        "auth.failure"
+    );
 }
 
 /// Build the 503 memory-pressure response. Used when the `JtiReplayStore`

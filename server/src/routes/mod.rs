@@ -30,7 +30,6 @@ use axum::routing::any;
 
 use crate::app::AppState;
 use crate::auth::context::OidcContext;
-use crate::auth::middleware::vault_guard;
 use crate::auth::replay::JtiReplayStore;
 use crate::logging::events::emit_request_rejected;
 use crate::proxy_trust::{self, EffectiveAddress};
@@ -55,10 +54,14 @@ pub fn build_router(
     let mut router = Router::new().route("/health", any(health::handle_health));
 
     if let (Some(ctx), Some(replay)) = (vault_ctx, replay_store) {
-        // Vault subtree (`/api/*`) gets the vault guard layered ON IT
-        // before merge, so the guard does NOT run on `/health` or on
-        // path-mismatch requests.
-        let vault_routes = api::vault_routes().layer(vault_guard(ctx, replay));
+        // Vault subtree (`/api/*`). The guard is layered on the GET
+        // method INSIDE `vault_routes` (not on the Router itself), so
+        // non-GET methods on /api/whoami return 404 via the
+        // method_not_allowed_fallback without ever invoking the auth
+        // pipeline. This closes the FR-030 leak that PR #4 review
+        // identified: a guard layered at the Router level would return
+        // 401 for non-GET requests, revealing that the route exists.
+        let vault_routes = api::vault_routes(ctx, replay);
         router = router.merge(vault_routes);
     }
 

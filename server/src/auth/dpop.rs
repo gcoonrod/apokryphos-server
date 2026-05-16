@@ -95,6 +95,15 @@ pub(crate) async fn validate_proof(
         _ => return Err(AuthFailure::InvalidAlg),
     };
 
+    // ── Step 1b: RFC 9449 §4.2 — JOSE typ MUST be "dpop+jwt". ──────────
+    // Reject any other JWS — including ID tokens that happen to validate
+    // against an embedded key. A non-DPoP JWS being routed through the
+    // proof validator is a category-1 failure that should never reach
+    // signature verification.
+    if header.typ.as_deref() != Some("dpop+jwt") {
+        return Err(AuthFailure::ProofSignatureInvalid);
+    }
+
     // ── Step 2: FR-017 signature verify against the embedded jwk. ──────
     let embedded_jwk = header.jwk.ok_or(AuthFailure::ProofSignatureInvalid)?;
     let decoding_key = DecodingKey::from_jwk(&embedded_jwk)

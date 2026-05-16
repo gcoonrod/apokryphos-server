@@ -20,12 +20,16 @@
 //!
 //! ## Memory pressure (FR-021 absolute prohibition)
 //!
-//! If `entries.len() >= config.max_replay_entries`, `try_insert` returns
-//! `MemoryPressure` without acquiring the `entries` lock and WITHOUT
-//! evicting any in-window entry. The middleware translates this to a
-//! 503 (no body) per `auth::failure::respond_503_memory_pressure`. The
-//! 503 makes the operator's monitoring see a degraded service rather
-//! than silently granting an attacker a free replay window.
+//! `try_insert` always takes the `entries` lock first and checks for a
+//! replay BEFORE checking memory pressure. This ordering is load-bearing:
+//! a `jti` that has already been seen MUST be rejected with `Replayed`
+//! regardless of whether the store is at capacity. Only NEW (previously-
+//! unseen) keys are subject to the memory-pressure check; if they arrive
+//! while `entries.len() >= config.max_replay_entries`, `try_insert` returns
+//! `MemoryPressure` and the middleware translates to a 503 (no body) per
+//! `auth::failure::respond_503_memory_pressure`. The 503 makes the
+//! operator's monitoring see a degraded service rather than silently
+//! granting an attacker a free replay window via eviction.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -91,9 +95,13 @@ pub enum InsertError {
 pub struct JtiReplayStore {
     entries: Mutex<HashMap<JtiKey, Instant>>,
     expiry_queue: Mutex<BinaryHeap<Reverse<(Instant, JtiKey)>>>,
-    /// Lock-free length counter, updated under the `entries` lock. Used
-    /// for the memory-pressure pre-check (avoids taking the lock when at
-    /// budget).
+    /// Snapshot of `entries.len()`, updated under the `entries` lock on
+    /// every successful mutation. Read by the public `len()` accessor
+    /// for tests + external observability (e.g. metrics, capacity-
+    /// pressure alerting). NOT used as a lock-free pre-check inside
+    /// `try_insert` — replay detection has precedence over memory
+    /// pressure, so `try_insert` always acquires the entries lock and
+    /// reads `entries.len()` under it.
     len: AtomicUsize,
     config: Arc<AuthConfig>,
 }

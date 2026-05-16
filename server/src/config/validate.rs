@@ -71,14 +71,26 @@ fn parse_auth(partial: Option<PartialAuth>) -> Result<AuthConfig, ConfigError> {
         p.on_demand_refresh_min_interval_secs,
     )?
     .unwrap_or(defaults.on_demand_refresh_min_interval_secs);
+    // Cross-field invariant: replay window must cover freshness + skew.
+    // Use `checked_add` to surface adversarial env values
+    // (e.g. APOK_AUTH_DPOP_FRESHNESS_SECS=18446744073709551615) as a
+    // typed ConfigError rather than panicking (debug) or wrapping
+    // (release). The same sum is the default for `jti_replay_window_secs`
+    // when the operator omits that key, so we compute it once and reuse.
+    let required = dpop_freshness_secs.checked_add(clock_skew_secs).ok_or(
+        ConfigError::AuthReplayWindowTooSmall {
+            window: 0,
+            freshness: dpop_freshness_secs,
+            skew: clock_skew_secs,
+            required: u64::MAX, // signals "overflow"; Display impl shows the offending sum
+        },
+    )?;
     let jti_replay_window_secs =
         parse_auth_positive_u64("jti_replay_window_secs", p.jti_replay_window_secs)?
-            .unwrap_or(dpop_freshness_secs + clock_skew_secs);
+            .unwrap_or(required);
     let max_replay_entries = parse_max_replay_entries(p.max_replay_entries)?
         .unwrap_or(defaults.max_replay_entries);
 
-    // Cross-field invariant: replay window must cover freshness + skew.
-    let required = dpop_freshness_secs + clock_skew_secs;
     if jti_replay_window_secs < required {
         return Err(ConfigError::AuthReplayWindowTooSmall {
             window: jti_replay_window_secs,

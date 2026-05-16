@@ -169,13 +169,16 @@ pub async fn init_single_context(
     }))
 }
 
+// The inline test module is split in two: the audience-tag tests are
+// `cfg(test)`-only because they need no external crates, while the
+// init_single_context smoke tests require `auth::testing` (and thus the
+// optional crypto deps activated by `test-utils`). Splitting like this
+// means `cargo test` without `--features test-utils` still compiles and
+// runs the audience-tag tests.
+
 #[cfg(test)]
-mod tests {
+mod tests_no_feature {
     use super::*;
-    use crate::auth::testing::{MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair};
-    use crate::config::OidcAudienceConfig;
-    use p256::ecdsa::SigningKey;
-    use serde_json::json;
 
     #[test]
     fn audience_tag_distinct_jti_bytes() {
@@ -191,6 +194,15 @@ mod tests {
         assert_eq!(AudienceTag::Vault.to_string(), "vault");
         assert_eq!(AudienceTag::Admin.to_string(), "admin");
     }
+}
+
+#[cfg(all(test, feature = "test-utils"))]
+mod tests {
+    use super::*;
+    use crate::auth::testing::{MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair};
+    use crate::config::OidcAudienceConfig;
+    use p256::ecdsa::SigningKey;
+    use serde_json::json;
 
     /// End-to-end smoke for the OIDC context lifecycle: spin up an
     /// in-process `MockOidcProvider` serving a JWKS with one ES256 key,

@@ -5,21 +5,21 @@
 //! `specs/003-fapi-dpop-auth-core/contracts/internal.md` §`auth/mod.rs`
 //! for the public surface and the cross-module forbidden-interaction rules.
 //!
-//! ## Submodule status (Phase 2 = scaffold; Phase 3 = full implementation)
+//! ## Submodule status (Phase 3 US1 MVP — all live; US2 extends the dual-context surface)
 //!
-//! | Submodule    | Phase 2 status                         | Filled in by |
-//! |--------------|----------------------------------------|--------------|
-//! | `crypto`     | ✅ ct_eq_* + JWK thumbprint            | T010         |
-//! | `failure`    | ✅ respond_401 + respond_503 + AuthFailure | T011     |
-//! | `subject`    | ✅ VaultSubject + AdminSubject + ext keys | T012      |
-//! | `replay`     | ✅ JtiReplayStore                      | T013         |
-//! | `testing`    | ✅ key generation + RNG (rest deferred to Phase 3) | T014 |
-//! | `context`    | stub (empty file)                      | T018, T028   |
-//! | `discovery`  | stub                                   | T016         |
-//! | `dpop`       | stub                                   | T020         |
-//! | `jwks`       | stub                                   | T017         |
-//! | `middleware` | stub                                   | T021, T032   |
-//! | `token`      | stub                                   | T019         |
+//! | Submodule    | Current state                                           | Owning tasks |
+//! |--------------|---------------------------------------------------------|--------------|
+//! | `crypto`     | ✅ `ct_eq_*` + RFC 7638 JWK thumbprint                  | T010         |
+//! | `failure`    | ✅ `respond_401` + `respond_503` + `log_failure` + `AuthFailure` | T011 |
+//! | `subject`    | ✅ `VaultSubject` + `AdminSubject` + private extensions | T012         |
+//! | `replay`     | ✅ `JtiReplayStore` + `JtiKey`                          | T013         |
+//! | `testing`    | ✅ keygen + RNG + `MockOidcProvider` + mint_* helpers   | T014         |
+//! | `context`    | ✅ `OidcContext` + `AudienceTag` + `init_single_context`; US2 adds `init_contexts` + cross-reach (`Weak<OidcContext>`) | T018, T028 |
+//! | `discovery`  | ✅ `fetch_discovery` + `Discovery` cache                | T016         |
+//! | `dpop`       | ✅ `validate_proof` (FR-010a, FR-017..FR-023)           | T020         |
+//! | `jwks`       | ✅ `fetch_jwks` + `Jwks` + `JwsAlg` allowlist           | T017         |
+//! | `middleware` | ✅ `VaultGuard`; US2 adds `AdminGuard`                  | T021, T032   |
+//! | `token`      | ✅ `validate_token` (FR-010a, FR-011..FR-016)           | T019         |
 
 pub mod context;
 pub mod crypto;
@@ -32,7 +32,16 @@ pub mod replay;
 mod subject;
 mod token;
 
-#[cfg(any(test, feature = "test-utils"))]
+// `auth::testing` is gated on the `test-utils` feature ONLY (not on
+// `cfg(test)`). The module pulls in optional deps (p256, rsa, rand,
+// rand_chacha) that are themselves activated only by the feature; if
+// the gate also fired on plain `cfg(test)`, `cargo test` without
+// `--features test-utils` would fail to compile because those crates
+// aren't in the dependency graph. Phase 3 integration tests under
+// `server/tests/` declare `required-features = ["test-utils"]`, and
+// inline `mod tests` blocks that need `auth::testing` are themselves
+// gated on the feature.
+#[cfg(feature = "test-utils")]
 pub mod testing;
 
 // Phase 2 + Phase 3 (US1 first step) re-exports. Phase 3 US2 will broaden
