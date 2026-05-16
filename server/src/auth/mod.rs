@@ -21,12 +21,12 @@
 //! | `middleware` | stub                                   | T021, T032   |
 //! | `token`      | stub                                   | T019         |
 
-mod context;
+pub mod context;
 pub mod crypto;
-mod discovery;
+pub mod discovery;
 mod dpop;
 pub mod failure;
-mod jwks;
+pub mod jwks;
 mod middleware;
 pub mod replay;
 mod subject;
@@ -35,9 +35,12 @@ mod token;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod testing;
 
-// Phase 2 re-exports (the only types currently usable from outside `auth::`).
-// Phase 3 will broaden this as `OidcContext`, `VaultGuard`, `AdminGuard`,
-// `init_contexts`, etc. land. See contracts/internal.md §`auth/mod.rs`.
+// Phase 2 + Phase 3 (US1 first step) re-exports. Phase 3 US2 will broaden
+// this as `VaultGuard`, `AdminGuard`, `init_contexts`, etc. land. See
+// contracts/internal.md §`auth/mod.rs`.
+pub use context::{AudienceTag, ContextInitError, OidcContext, init_single_context};
+pub use discovery::{Discovery, DiscoveryFetchError};
 pub use failure::{respond_401, respond_503_memory_pressure};
+pub use jwks::{Jwk, Jwks, JwksFetchError, JwsAlg};
 pub use replay::{InsertError as ReplayInsertError, JtiKey, JtiReplayStore};
 pub use subject::{AdminSubject, VaultSubject};

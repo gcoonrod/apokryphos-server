@@ -38,6 +38,7 @@ rand_chacha = { version = "0.3", optional = true }
 rsa = { version = "0.9", optional = true }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha2 = "0.10"
 subtle = "2"
 thiserror = "2.0"
