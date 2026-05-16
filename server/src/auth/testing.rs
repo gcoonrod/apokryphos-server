@@ -204,6 +204,142 @@ async fn serve_jwks(State(state): State<MockState>) -> Json<Value> {
     Json((*state.jwks).clone())
 }
 
+// ────────────────────── Token + DPoP mint helpers ────────────────────────
+
+/// Strongly-typed claims accepted by `mint_es256_token`. All fields are
+/// required by FR-015 (`sub`, `aud`, `iss`, `exp`, `iat`, `cnf.jkt`) except
+/// `nbf` which is optional. Tests construct deliberately-malformed values
+/// to exercise specific FR-011..FR-016 negative cases by overriding fields
+/// individually.
+#[derive(Debug, Clone)]
+pub struct MintTokenClaims {
+    pub sub: String,
+    pub aud: String,
+    pub iss: String,
+    pub iat: u64,
+    pub exp: u64,
+    pub nbf: Option<u64>,
+    /// Base64url-encoded SHA-256 JWK thumbprint of the DPoP proof key.
+    /// Empty string allowed for the FR-015 "missing cnf.jkt" negative test.
+    pub cnf_jkt: String,
+}
+
+/// Mint an ES256-signed JWT with the supplied claims. Used by token-
+/// validation tests + the whoami happy-path test. `omit_cnf_jkt = true`
+/// suppresses the `cnf.jkt` field entirely (for FR-015 negative tests);
+/// otherwise the `cnf.jkt` field is included with the value from
+/// `claims.cnf_jkt`.
+pub fn mint_es256_token(
+    claims: &MintTokenClaims,
+    signing_key: &p256::ecdsa::SigningKey,
+    kid: Option<&str>,
+    omit_cnf_jkt: bool,
+) -> String {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use p256::pkcs8::EncodePrivateKey;
+
+    let mut header = Header::new(Algorithm::ES256);
+    if let Some(k) = kid {
+        header.kid = Some(k.to_string());
+    }
+
+    let mut claims_json = serde_json::json!({
+        "sub": claims.sub,
+        "aud": claims.aud,
+        "iss": claims.iss,
+        "iat": claims.iat,
+        "exp": claims.exp,
+    });
+    if let Some(nbf) = claims.nbf {
+        claims_json
+            .as_object_mut()
+            .unwrap()
+            .insert("nbf".into(), serde_json::json!(nbf));
+    }
+    if !omit_cnf_jkt {
+        claims_json.as_object_mut().unwrap().insert(
+            "cnf".into(),
+            serde_json::json!({ "jkt": claims.cnf_jkt }),
+        );
+    }
+
+    let pem = signing_key
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .expect("p256 to_pkcs8_pem must succeed for in-memory key");
+    let key = EncodingKey::from_ec_pem(pem.as_bytes())
+        .expect("jsonwebtoken from_ec_pem must accept p256 PKCS#8 PEM");
+    encode(&header, &claims_json, &key).expect("test token mint must succeed")
+}
+
+/// Mint a DPoP proof JWS per RFC 9449. The JOSE header embeds the
+/// signing key's *public* JWK via the `jwk` parameter; the payload
+/// carries `htm` / `htu` / `iat` / `jti`. Used by DPoP-validation tests
+/// + the whoami happy-path test. Test code injects deliberately-malformed
+/// values (wrong `htm`, stale `iat`, etc.) by overriding the inputs.
+pub fn mint_es256_dpop_proof(
+    signing_key: &p256::ecdsa::SigningKey,
+    htm: &str,
+    htu: &str,
+    iat: u64,
+    jti: &str,
+) -> String {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use p256::pkcs8::EncodePrivateKey;
+
+    // RFC 9449 §4.1: typ MUST be "dpop+jwt"; alg is the JWS signing
+    // algorithm; jwk carries the public key.
+    let public_jwk_value = es256_public_jwk(signing_key.verifying_key(), None);
+    let mut header = Header::new(Algorithm::ES256);
+    header.typ = Some("dpop+jwt".to_string());
+    // The `jwk` field on jsonwebtoken::Header is `Option<jwk::Jwk>`. We
+    // deserialize our `Value` representation back into the typed form so
+    // jsonwebtoken's serialization emits a well-formed JOSE header.
+    header.jwk = Some(
+        serde_json::from_value(public_jwk_value)
+            .expect("es256_public_jwk produces a valid Jwk shape"),
+    );
+
+    let claims = serde_json::json!({
+        "htm": htm,
+        "htu": htu,
+        "iat": iat,
+        "jti": jti,
+    });
+
+    let pem = signing_key
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .expect("p256 to_pkcs8_pem must succeed for in-memory key");
+    let key = EncodingKey::from_ec_pem(pem.as_bytes())
+        .expect("jsonwebtoken from_ec_pem must accept p256 PKCS#8 PEM");
+    encode(&header, &claims, &key).expect("test dpop proof mint must succeed")
+}
+
+/// Compute the RFC 7638 thumbprint (base64url-encoded) of an ES256
+/// public key. Convenience for setting `cnf.jkt` in `MintTokenClaims`.
+pub fn es256_thumbprint_b64url(verifying_key: &p256::ecdsa::VerifyingKey) -> String {
+    use crate::auth::crypto::{JwkThumbprintInput, jwk_thumbprint_b64url};
+    let point = verifying_key.to_encoded_point(false);
+    let x = point.x().expect("p256 uncompressed encoding has x");
+    let y = point.y().expect("p256 uncompressed encoding has y");
+    let mut x_arr = [0u8; 32];
+    let mut y_arr = [0u8; 32];
+    x_arr.copy_from_slice(x);
+    y_arr.copy_from_slice(y);
+    jwk_thumbprint_b64url(JwkThumbprintInput::EcP256 {
+        x: &x_arr,
+        y: &y_arr,
+    })
+}
+
+/// Current Unix timestamp in seconds. Tests pin time relative to this
+/// for `iat`/`exp` computation.
+pub fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

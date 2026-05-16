@@ -72,10 +72,40 @@ pub enum AppError {
 
 /// Production entry point. Returns `Err` for config-load / bind / serve
 /// failures; the caller (`main`) translates to an `ExitCode`.
+///
+/// Phase 3 US1 bootstrap order:
+///   1. `config::load()` — Phase 2.
+///   2. `auth::init_single_context(Vault, &cfg.vault_oidc, ...)` — fetch
+///      discovery + JWKS; FR-002 / FR-006 startup failures propagate as
+///      `AppError::Auth` (mapped to non-zero exit by `main`).
+///   3. Construct `Arc<JtiReplayStore>` from the validated `AuthConfig`.
+///   4. Bind listener (Phase 2).
+///   5. `emit_server_started` (Phase 2).
+///   6. `routes::build_router(state, Some(vault_ctx), Some(replay_store))`.
+///   7. Serve with graceful drain (Phase 2).
+///
+/// US2 (T035) will replace step 2 with the dual-context `init_contexts`
+/// and spawn the four refresh tasks + replay-store cleanup; US1 leaves
+/// that wiring for the follow-up.
 pub async fn run() -> Result<(), AppError> {
     let cfg = config::load()?;
     let bind_addr = cfg.bind_address;
     let drain_timeout = cfg.drain_timeout;
+
+    // Phase 3 US1 vault-context init (FR-002, FR-006).
+    let auth_cfg = Arc::new(cfg.auth.clone());
+    let http_client = openidconnect::reqwest::Client::new();
+    let vault_ctx = crate::auth::init_single_context(
+        crate::auth::AudienceTag::Vault,
+        &cfg.vault_oidc,
+        Arc::clone(&auth_cfg),
+        &http_client,
+    )
+    .await
+    .map_err(|e| AppError::Auth(e.to_string()))?;
+
+    let replay_store = Arc::new(crate::auth::JtiReplayStore::new(Arc::clone(&auth_cfg)));
+
     let state = AppState {
         config: Arc::new(cfg),
     };
@@ -95,7 +125,7 @@ pub async fn run() -> Result<(), AppError> {
 
     emit_server_started(local_addr);
 
-    let router = routes::build_router(state);
+    let router = routes::build_router(state, Some(vault_ctx), Some(replay_store));
     serve_with_shutdown(
         listener,
         router,

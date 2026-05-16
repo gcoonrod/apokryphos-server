@@ -44,12 +44,19 @@ subtle = "2"
 thiserror = "2.0"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync"] }
 toml = "0.8"
+# `tower` was Phase 2 dev-only (integration-test `ServiceExt::oneshot`).
+# Phase 3 promotes it to a regular dep because `auth::middleware::VaultGuard`
+# / `AdminGuard` implement `tower::Layer` as part of the public lib surface.
+tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 url = "2"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util"] }
+# Re-listed here (with the `util` feature) for `tower::ServiceExt::oneshot`
+# in integration tests; the runtime dep above lacks `util` to keep the
+# release binary slim.
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
 

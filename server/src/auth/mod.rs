@@ -27,7 +27,7 @@ pub mod discovery;
 mod dpop;
 pub mod failure;
 pub mod jwks;
-mod middleware;
+pub mod middleware;
 pub mod replay;
 mod subject;
 mod token;
