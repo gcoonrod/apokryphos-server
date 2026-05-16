@@ -24,6 +24,9 @@ specs/
 # Local scratch directory
 tmp/
 
+# Local-only server roadmap (working planning notes; not public)
+server/ROADMAP.md
+
 # Node (future SPAs)
 node_modules/
 dist/

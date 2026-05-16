@@ -4,11 +4,58 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 
+[features]
+# Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel).
+# Every integration test under server/tests/ declares required-features = ["test-utils"].
+# Never enabled in release builds.
+test-utils = []
+
 [dependencies]
 axum = "0.8"
+ipnet = "2.10"
 openidconnect = "4.0"
 rusqlite = { version = "0.39", features = ["bundled"] }
-serde = "1.0"
-tokio = "1.52"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync"] }
+toml = "0.8"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+
+[[test]]
+name = "config_load"
+required-features = ["test-utils"]
+
+[[test]]
+name = "proxy_trust_in_range"
+required-features = ["test-utils"]
+
+[[test]]
+name = "proxy_trust_out_of_range"
+required-features = ["test-utils"]
+
+[[test]]
+name = "proxy_trust_empty_list"
+required-features = ["test-utils"]
+
+[[test]]
+name = "logging_redaction"
+required-features = ["test-utils"]
+
+[[test]]
+name = "logging_events"
+required-features = ["test-utils"]
+
+[[test]]
+name = "liveness"
+required-features = ["test-utils"]
+
+[[test]]
+name = "shutdown_drain"
+required-features = ["test-utils"]
