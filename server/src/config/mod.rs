@@ -27,11 +27,35 @@ pub(crate) use validate::validate;
 /// Production entry point: read env vars, optionally read TOML at
 /// `APOK_CONFIG_PATH`, merge with env-overrides-file precedence, validate.
 pub fn load() -> Result<ServerConfig, ConfigError> {
-    let env_partial = collect_env(&std::env::vars().collect());
-    let toml_path = std::env::var("APOK_CONFIG_PATH").ok().filter(|s| !s.is_empty());
+    let env_map = collect_apok_env()?;
+    let env_partial = collect_env(&env_map);
+    let toml_path = env_map
+        .get("APOK_CONFIG_PATH")
+        .cloned()
+        .filter(|s| !s.is_empty());
     let file_partial = load_optional_file(toml_path.as_deref())?;
     let merged = env_overrides_file(env_partial, file_partial);
     validate(merged)
+}
+
+/// Collect `APOK_*` environment variables into a `BTreeMap`, using `vars_os`
+/// so an unrelated non-UTF-8 variable elsewhere in the process environment
+/// cannot panic startup. Non-UTF-8 keys are silently skipped (they cannot be
+/// `APOK_*` since the prefix is ASCII); non-UTF-8 values on `APOK_*` keys
+/// produce a `ConfigError::NonUnicodeEnv`.
+fn collect_apok_env() -> Result<std::collections::BTreeMap<String, String>, ConfigError> {
+    let mut map = std::collections::BTreeMap::new();
+    for (key_os, val_os) in std::env::vars_os() {
+        let Some(key) = key_os.to_str() else { continue };
+        if !key.starts_with("APOK_") {
+            continue;
+        }
+        let value = val_os
+            .into_string()
+            .map_err(|_| ConfigError::NonUnicodeEnv { key: key.to_string() })?;
+        map.insert(key.to_string(), value);
+    }
+    Ok(map)
 }
 
 /// Test entry point. Accepts explicit env-var and TOML-text inputs so unit

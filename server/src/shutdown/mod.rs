@@ -23,28 +23,43 @@
 //! deliberately forecloses. Any future PR that interprets SIGHUP as
 //! "reload config" must first amend the constitution.
 
+use std::io;
 use std::time::Duration;
 
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{Signal, SignalKind, signal};
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::oneshot;
 
 use crate::logging::events::emit_server_shutdown_initiated;
 
-/// Production: await SIGINT, SIGTERM, or SIGHUP. Emit
-/// `server.shutdown.initiated` with the matching `signal` field, then return.
-pub async fn signal_listener_for_signals(drain_timeout: Duration) {
-    let mut sigint = signal(SignalKind::interrupt())
-        .expect("failed to install SIGINT listener");
-    let mut sigterm = signal(SignalKind::terminate())
-        .expect("failed to install SIGTERM listener");
-    let mut sighup = signal(SignalKind::hangup())
-        .expect("failed to install SIGHUP listener");
+/// SIGINT/SIGTERM/SIGHUP handles, installed eagerly during bootstrap so the
+/// process cannot be killed by the default disposition during the window
+/// between listener bind and axum's first poll of the shutdown future.
+pub struct InstalledSignals {
+    sigint: Signal,
+    sigterm: Signal,
+    sighup: Signal,
+}
 
+/// Synchronously install SIGINT, SIGTERM, and SIGHUP handlers. Returns
+/// `io::Result` so the caller can propagate failure as `AppError::SignalSetup`
+/// — this runs after the global tracing subscriber is up, where panicking
+/// is forbidden (contracts/internal.md).
+pub fn install_signals() -> io::Result<InstalledSignals> {
+    let sigint = signal(SignalKind::interrupt())?;
+    let sigterm = signal(SignalKind::terminate())?;
+    let sighup = signal(SignalKind::hangup())?;
+    Ok(InstalledSignals { sigint, sigterm, sighup })
+}
+
+/// Production: await whichever of the pre-installed signal streams fires
+/// first. Emit `server.shutdown.initiated` with the matching `signal` field,
+/// then return.
+pub async fn wait_for_signal(mut signals: InstalledSignals, drain_timeout: Duration) {
     let signal_name = tokio::select! {
-        _ = sigint.recv() => "SIGINT",
-        _ = sigterm.recv() => "SIGTERM",
-        _ = sighup.recv() => "SIGHUP",
+        _ = signals.sigint.recv() => "SIGINT",
+        _ = signals.sigterm.recv() => "SIGTERM",
+        _ = signals.sighup.recv() => "SIGHUP",
     };
 
     emit_server_shutdown_initiated(signal_name, drain_timeout);

@@ -54,6 +54,9 @@ pub enum AppError {
         source: io::Error,
     },
 
+    #[error("failed to install signal handlers: {0}")]
+    SignalSetup(#[source] io::Error),
+
     #[error("serve error during request handling: {0}")]
     Serve(#[source] io::Error),
 }
@@ -76,13 +79,18 @@ pub async fn run() -> Result<(), AppError> {
         source,
     })?;
 
+    // Install signal handlers *before* announcing readiness, so a signal
+    // arriving immediately after bind cannot fall through to the default
+    // termination disposition while axum is still setting up its serve loop.
+    let signals = shutdown::install_signals().map_err(AppError::SignalSetup)?;
+
     emit_server_started(local_addr);
 
     let router = routes::build_router(state);
     serve_with_shutdown(
         listener,
         router,
-        shutdown::signal_listener_for_signals(drain_timeout),
+        shutdown::wait_for_signal(signals, drain_timeout),
         drain_timeout,
     )
     .await

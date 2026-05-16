@@ -62,15 +62,16 @@ async fn drain_completes_in_window() {
 /// and the outer Result is still `Ok` (forced close is not an error per
 /// FR-017).
 ///
-/// Sequencing:
-///   1. Spawn `serve_with_shutdown` as a task and let it bind and start
-///      accepting connections (50 ms grace).
-///   2. Spawn a client that opens a TCP stream and writes a full request
-///      to `/slow`. Wait long enough for axum to accept and dispatch it
-///      (150 ms grace).
-///   3. Fire the shutdown signal. Start the elapsed timer here — this is
-///      "drain time", not "uptime".
-///   4. Await the server task. Assert elapsed ≥ drain_timeout (the slow
+/// Sequencing (no wall-clock grace periods; everything is event-driven):
+///   1. Spawn `serve_with_shutdown` as a task.
+///   2. Connect a client via retry-connect (handles the bind race without a
+///      fixed sleep). Write a full `/slow` request.
+///   3. The `/slow` handler notifies an `entered` channel *before* sleeping,
+///      so the test knows the request is provably in-flight when shutdown
+///      fires — no 150 ms guess about request dispatch latency.
+///   4. Fire shutdown; start the elapsed timer here ("drain time", not
+///      "uptime").
+///   5. Await the server task. Assert elapsed ≥ drain_timeout (the slow
 ///      handler held drain open until the deadline) and ≤ 2 s.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drain_timeout_exceeded_returns_ok_with_drained_cleanly_false() {
@@ -79,11 +80,20 @@ async fn drain_timeout_exceeded_returns_ok_with_drained_cleanly_false() {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let drain_timeout = Duration::from_millis(200);
 
+    // Handler-entry signal: the `/slow` handler fires this before sleeping,
+    // so the test can wait for proof of in-flight status without guessing.
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let entered_handler = Arc::clone(&entered);
+
     let router: Router = Router::new().route(
         "/slow",
-        get(|| async {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            "done"
+        get(move || {
+            let notify = Arc::clone(&entered_handler);
+            async move {
+                notify.notify_one();
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                "done"
+            }
         }),
     );
     let shutdown_fut = async move {
@@ -94,12 +104,14 @@ async fn drain_timeout_exceeded_returns_ok_with_drained_cleanly_false() {
     let server_handle =
         tokio::spawn(serve_with_shutdown(listener, router, shutdown_fut, drain_timeout));
 
-    // (2a) Let the server bind and start accepting.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // (2b) Spawn a client that issues a full request to /slow.
+    // (2) Connect with retry so we don't race the bind, then write the request.
     let client_handle = tokio::spawn(async move {
-        let mut stream = TcpStream::connect(local_addr).await.expect("connect");
+        let mut stream = loop {
+            match TcpStream::connect(local_addr).await {
+                Ok(s) => break s,
+                Err(_) => tokio::time::sleep(Duration::from_millis(5)).await,
+            }
+        };
         let _ = stream
             .write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
             .await;
@@ -115,14 +127,14 @@ async fn drain_timeout_exceeded_returns_ok_with_drained_cleanly_false() {
         }
     });
 
-    // (2c) Let the request reach the handler.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    // (3) Wait until the handler has provably been entered.
+    entered.notified().await;
 
-    // (3) Fire shutdown — START the timer here.
+    // (4) Fire shutdown — START the timer here.
     let shutdown_start = std::time::Instant::now();
     let _ = shutdown_tx.send(());
 
-    // (4) Wait for the server.
+    // (5) Wait for the server.
     let result = server_handle.await.expect("server task panicked");
     let drain_elapsed = shutdown_start.elapsed();
 

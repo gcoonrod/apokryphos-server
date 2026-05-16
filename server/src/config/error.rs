@@ -59,4 +59,7 @@ pub enum ConfigError {
         #[from]
         source: toml::de::Error,
     },
+
+    #[error("environment variable {key} contains non-UTF-8 data")]
+    NonUnicodeEnv { key: String },
 }

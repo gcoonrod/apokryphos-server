@@ -25,23 +25,11 @@ pub struct HealthResponse {
     alive: bool,
 }
 
-/// Entry point registered with `any(...)`. GET returns the JSON body;
-/// every other method returns the same byte-identical 404 as the fallback.
+/// Entry point registered with `any(...)`. Only `GET` returns the JSON body;
+/// every other method (including `HEAD`) is rejected with the same
+/// byte-identical 404 as the path-mismatch fallback (contracts/http.md).
 pub async fn handle_health(method: Method, request: axum::extract::Request) -> Response {
-    if method == Method::GET || method == Method::HEAD {
-        // axum strips bodies for HEAD automatically. Treating HEAD as a method
-        // mismatch (404) would diverge from the "constant /health response"
-        // intent; treating it as GET makes /health behave consistently with
-        // the standard HEAD-of-GET pattern. The 404 fallback contract is
-        // about deliberately-wrong methods (POST/PUT/DELETE/OPTIONS), not
-        // about the framework's automatic HEAD support.
-        //
-        // Actually — re-reading contracts/http.md, `HEAD /health` is listed
-        // alongside POST/OPTIONS/DELETE as a case that should return 404.
-        // So we reject HEAD here too.
-        if method == Method::HEAD {
-            return reject_404(&method, request).await;
-        }
+    if method == Method::GET {
         Json(HealthResponse { alive: true }).into_response()
     } else {
         reject_404(&method, request).await
