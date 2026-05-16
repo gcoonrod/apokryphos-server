@@ -89,13 +89,14 @@ fn base_claims(fixture: &Fixture, sub: &str) -> MintTokenClaims {
     }
 }
 
-fn mint_proof(fixture: &Fixture, jti: &str) -> String {
+fn mint_proof(fixture: &Fixture, token: &str, jti: &str) -> String {
     mint_es256_dpop_proof(
         &fixture.signing_key,
         "GET",
         "http://127.0.0.1/api/whoami",
         now_unix_secs(),
         jti,
+        Some(token),
     )
 }
 
@@ -134,7 +135,7 @@ async fn positive_token_with_no_nbf_succeeds() {
         Some(TEST_KID),
         false,
     );
-    let proof = mint_proof(&fx, "jti-pos-1");
+    let proof = mint_proof(&fx, &token, "jti-pos-1");
     assert_eq!(drive(&fx.router, &token, &proof).await, StatusCode::OK);
 }
 
@@ -146,7 +147,7 @@ async fn positive_token_with_nbf_within_skew_succeeds() {
     let mut claims = base_claims(&fx, "vault-pos-nbf");
     claims.nbf = Some(now_unix_secs() + 30);
     let token = mint_es256_token(&claims, &fx.signing_key, Some(TEST_KID), false);
-    let proof = mint_proof(&fx, "jti-pos-nbf");
+    let proof = mint_proof(&fx, &token, "jti-pos-nbf");
     assert_eq!(drive(&fx.router, &token, &proof).await, StatusCode::OK);
 }
 
@@ -158,7 +159,7 @@ async fn negative_wrong_audience_rejected() {
     let mut claims = base_claims(&fx, "vault-x-aud");
     claims.aud = "apokryphos-test-admin".to_string(); // the other audience
     let token = mint_es256_token(&claims, &fx.signing_key, Some(TEST_KID), false);
-    let proof = mint_proof(&fx, "jti-neg-aud");
+    let proof = mint_proof(&fx, &token, "jti-neg-aud");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED
@@ -177,7 +178,7 @@ async fn negative_expired_token_rejected() {
     claims.iat = now - 7200;
     claims.exp = now - 3600;
     let token = mint_es256_token(&claims, &fx.signing_key, Some(TEST_KID), false);
-    let proof = mint_proof(&fx, "jti-neg-exp");
+    let proof = mint_proof(&fx, &token, "jti-neg-exp");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED
@@ -196,7 +197,7 @@ async fn negative_bad_signature_rejected() {
     // Use mint_es256_token with the attacker's key — the signature won't
     // verify against the mock's JWKS.
     let token = mint_es256_token(&claims, &attacker_key, Some(TEST_KID), false);
-    let proof = mint_proof(&fx, "jti-neg-sig");
+    let proof = mint_proof(&fx, &token, "jti-neg-sig");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED
@@ -210,7 +211,7 @@ async fn negative_missing_cnf_jkt_rejected() {
     let fx = setup_fixture(6).await;
     let claims = base_claims(&fx, "vault-x-cnf");
     let token = mint_es256_token(&claims, &fx.signing_key, Some(TEST_KID), true);
-    let proof = mint_proof(&fx, "jti-neg-cnf");
+    let proof = mint_proof(&fx, &token, "jti-neg-cnf");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED
@@ -225,7 +226,7 @@ async fn negative_wrong_issuer_rejected() {
     let mut claims = base_claims(&fx, "vault-x-iss");
     claims.iss = "https://attacker.invalid".to_string();
     let token = mint_es256_token(&claims, &fx.signing_key, Some(TEST_KID), false);
-    let proof = mint_proof(&fx, "jti-neg-iss");
+    let proof = mint_proof(&fx, &token, "jti-neg-iss");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED
@@ -262,7 +263,7 @@ async fn negative_disallowed_alg_rs256_rejected() {
         "cnf": { "jkt": claims.cnf_jkt },
     });
     let token = encode(&header, &claims_json, &encoding_key).unwrap();
-    let proof = mint_proof(&fx, "jti-neg-rs256");
+    let proof = mint_proof(&fx, &token, "jti-neg-rs256");
     assert_eq!(
         drive(&fx.router, &token, &proof).await,
         StatusCode::UNAUTHORIZED

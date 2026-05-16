@@ -1,11 +1,13 @@
 //! DPoP proof validation per RFC 9449 + FAPI 2.0 + DPoP profile (FR-010a,
-//! FR-017..FR-023, research R3 + R4 + R7 + R10).
+//! FR-017..FR-023 inclusive of FR-022a, research R3 + R4 + R7 + R10).
 //!
 //! `validate_proof` is the *only* constructor of `DpopProof`. It runs the
 //! validation pipeline in exactly the order FR-017..FR-023 specifies:
 //!
 //!   1. **FR-010a alg allowlist (FIRST gate)** — pre-decode the JOSE
 //!      header; reject any `alg ∉ {PS256, ES256}` before signature work.
+//!   1b. **RFC 9449 §4.2 `typ` header** — reject any proof whose JOSE
+//!       `typ` is not exactly `"dpop+jwt"`.
 //!   2. **FR-017 signature verify** — verify the JWS against the public
 //!      key embedded in the proof's own `jwk` JOSE header parameter
 //!      (RFC 9449 §4.2).
@@ -19,6 +21,12 @@
 //!   6. **FR-022 `jkt` ↔ `cnf.jkt` match** — compute RFC 7638 thumbprint
 //!      of the proof's embedded `jwk`; constant-time compare against the
 //!      access token's `cnf.jkt` field.
+//!   6b. **FR-022a `ath` ↔ access-token-hash match** — compute base64url
+//!       SHA-256 of the trimmed bearer-token bytes; constant-time compare
+//!       against the proof's `ath` claim. Runs AFTER signature verify
+//!       (so a forged proof rejecting at the sig step cannot leak
+//!       access-token-hash material via timing) and BEFORE replay insert
+//!       (so a substitution attempt cannot consume a `jti` slot).
 //!   7. **FR-021 replay check** — atomic insert of `(audience_tag,
 //!      sha256(jti))` into the replay store; `Replayed` → 401,
 //!      `MemoryPressure` → 503.
@@ -26,8 +34,10 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::http::Method;
+use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::auth::context::OidcContext;
@@ -56,6 +66,11 @@ pub struct DpopProof {
     /// `AccessToken::cnf_jkt` via constant-time comparison.
     #[allow(dead_code)]
     pub(crate) thumbprint: [u8; 32],
+    /// FR-022a: base64url-no-pad SHA-256 of the access token's
+    /// wire-form ASCII bytes. Matched against the proof's `ath` claim
+    /// via constant-time string equality.
+    #[allow(dead_code)]
+    pub(crate) ath: String,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +79,20 @@ struct DpopClaims {
     htu: Option<String>,
     iat: Option<u64>,
     jti: Option<String>,
+    /// FR-022a (RFC 9449 §4.2): base64url SHA-256 of the access token's
+    /// wire-form bytes. Required at protected resources.
+    #[serde(default)]
+    ath: Option<String>,
+}
+
+/// Compute the FR-022a `ath` value for a given access token: base64url
+/// (URL-safe, no padding) of SHA-256 over the token's wire-form ASCII
+/// bytes. The caller passes the *trimmed* bearer-token string from the
+/// `Authorization: DPoP <token>` header, after the scheme prefix is
+/// stripped and surrounding whitespace removed.
+pub(crate) fn compute_ath(raw_token: &str) -> String {
+    let digest = Sha256::digest(raw_token.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 /// Validate a raw DPoP proof JWS.
@@ -76,6 +105,10 @@ struct DpopClaims {
 ///     resolution, path+query from the request line).
 ///   - `access_token` — the previously-validated access token; its
 ///     `cnf_jkt` is matched against the proof's embedded-key thumbprint.
+///   - `raw_token` — the trimmed bearer-token bytes from the request's
+///     `Authorization: DPoP <token>` header. Used by FR-022a to compute
+///     the expected `ath` value (base64url SHA-256 of these bytes) and
+///     constant-time compare against the proof's `ath` claim.
 ///   - `ctx` — the OIDC context (provides the audience tag for the
 ///     replay-store key and the freshness/skew tolerances).
 ///   - `replay_store` — the shared `JtiReplayStore` for the FR-021 check.
@@ -84,6 +117,7 @@ pub(crate) async fn validate_proof(
     request_method: &Method,
     effective_uri: &Url,
     access_token: &AccessToken,
+    raw_token: &str,
     ctx: &OidcContext,
     replay_store: &JtiReplayStore,
 ) -> Result<DpopProof, AuthFailure> {
@@ -166,6 +200,23 @@ pub(crate) async fn validate_proof(
         return Err(AuthFailure::ProofJktMismatch);
     }
 
+    // ── Step 6b: FR-022a ath ↔ access-token-hash match. ───────────────
+    // RFC 9449 §4.2: the `ath` claim binds the proof to the SPECIFIC
+    // access token, not just the DPoP key. Missing `ath` is a hard
+    // rejection (bearer-token-style proofs are forbidden — spec Story 3
+    // Acceptance Scenario #9). Mismatched `ath` is the substitution-
+    // resistance failure: the proof was minted against a different
+    // access token than the one presented on this request.
+    let claimed_ath = token_data
+        .claims
+        .ath
+        .as_deref()
+        .ok_or(AuthFailure::ProofMissingClaim("ath"))?;
+    let expected_ath = compute_ath(raw_token);
+    if !ct_eq_str(claimed_ath, &expected_ath) {
+        return Err(AuthFailure::ProofAthMismatch);
+    }
+
     // ── Step 7: FR-021 atomic replay check. ────────────────────────────
     let jti = token_data
         .claims
@@ -190,6 +241,7 @@ pub(crate) async fn validate_proof(
         iat,
         jti,
         thumbprint,
+        ath: expected_ath,
     })
 }
 

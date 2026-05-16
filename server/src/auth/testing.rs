@@ -273,15 +273,25 @@ pub fn mint_es256_token(
 
 /// Mint a DPoP proof JWS per RFC 9449. The JOSE header embeds the
 /// signing key's *public* JWK via the `jwk` parameter; the payload
-/// carries `htm` / `htu` / `iat` / `jti`. Used by DPoP-validation tests
-/// + the whoami happy-path test. Test code injects deliberately-malformed
-/// values (wrong `htm`, stale `iat`, etc.) by overriding the inputs.
+/// carries `htm` / `htu` / `iat` / `jti` and (per FR-022a) the `ath`
+/// claim binding the proof to a specific access token.
+///
+/// Arguments:
+///   - `ath_for`: `Some(raw_token)` includes `ath = base64url(SHA-256(raw_token))`
+///     in the claims (the normal case for protected-resource use, RFC
+///     9449 §4.2). `None` omits the `ath` field entirely — used by the
+///     FR-022a "missing ath" negative test to verify the validator
+///     rejects bearer-token-style proofs.
+///
+/// Test code injects deliberately-malformed values (wrong `htm`, stale
+/// `iat`, mismatched `ath`, etc.) by overriding the inputs.
 pub fn mint_es256_dpop_proof(
     signing_key: &p256::ecdsa::SigningKey,
     htm: &str,
     htu: &str,
     iat: u64,
     jti: &str,
+    ath_for: Option<&str>,
 ) -> String {
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use p256::pkcs8::EncodePrivateKey;
@@ -299,12 +309,18 @@ pub fn mint_es256_dpop_proof(
             .expect("es256_public_jwk produces a valid Jwk shape"),
     );
 
-    let claims = serde_json::json!({
+    let mut claims = serde_json::json!({
         "htm": htm,
         "htu": htu,
         "iat": iat,
         "jti": jti,
     });
+    if let Some(raw_token) = ath_for {
+        claims.as_object_mut().unwrap().insert(
+            "ath".into(),
+            serde_json::json!(compute_ath_for_test(raw_token)),
+        );
+    }
 
     let pem = signing_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
@@ -312,6 +328,17 @@ pub fn mint_es256_dpop_proof(
     let key = EncodingKey::from_ec_pem(pem.as_bytes())
         .expect("jsonwebtoken from_ec_pem must accept p256 PKCS#8 PEM");
     encode(&header, &claims, &key).expect("test dpop proof mint must succeed")
+}
+
+/// Compute the FR-022a `ath` value (base64url SHA-256 of an access
+/// token's wire-form bytes) for use in test fixtures. Mirrors
+/// `auth::dpop::compute_ath` but available without crate-internal
+/// visibility for integration tests under `tests/`.
+pub fn compute_ath_for_test(raw_token: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(raw_token.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
 /// Compute the RFC 7638 thumbprint (base64url-encoded) of an ES256

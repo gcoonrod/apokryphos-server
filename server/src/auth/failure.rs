@@ -47,6 +47,10 @@ pub(in crate::auth) enum AuthFailure {
     ProofHtuMismatch,
     ProofIatStale,
     ProofJktMismatch,
+    /// FR-022a: proof's `ath` claim does not match the base64url SHA-256
+    /// of the access token's wire-form bytes. The substitution-resistance
+    /// failure: the proof was minted against a different access token.
+    ProofAthMismatch,
     ProofReplayed,
     ProofMissingClaim(&'static str),
     JwksRefreshFailed,
@@ -74,6 +78,7 @@ impl AuthFailure {
             Self::ProofHtuMismatch => "auth.dpop.htu_mismatch",
             Self::ProofIatStale => "auth.dpop.iat_stale",
             Self::ProofJktMismatch => "auth.dpop.jkt_mismatch",
+            Self::ProofAthMismatch => "auth.dpop.ath_mismatch",
             Self::ProofReplayed => "auth.dpop.replayed",
             Self::ProofMissingClaim(_) => "auth.dpop.missing_claim",
             Self::JwksRefreshFailed => "auth.jwks.refresh_failed",

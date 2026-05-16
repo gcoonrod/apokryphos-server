@@ -22,7 +22,6 @@
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use axum::body::Body;
 use axum::extract::Request;
 use axum::http::header::AUTHORIZATION;
 use axum::response::Response;
@@ -177,12 +176,16 @@ async fn authenticate_vault(
     // ── Token validation (FR-010a → FR-016) ─────────────────────────────
     let access_token = validate_token(raw_token, ctx).await?;
 
-    // ── DPoP validation (FR-010a → FR-023) ──────────────────────────────
+    // ── DPoP validation (FR-010a → FR-023 inclusive of FR-022a) ─────────
+    // `raw_token` (the trimmed bearer-token bytes from the Authorization
+    // header) threads through so validate_proof can compute the FR-022a
+    // `ath` expected value: base64url(SHA-256(raw_token.bytes())).
     let _proof = validate_proof(
         raw_proof,
         request.method(),
         &effective_uri,
         &access_token,
+        raw_token,
         ctx,
         replay,
     )

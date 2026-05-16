@@ -126,6 +126,7 @@ async fn positive_valid_dpop_succeeds() {
         REQUEST_HTU,
         now_unix_secs(),
         "jti-pos",
+        Some(&fx.token),
     );
     assert_eq!(drive(&fx.router, &fx.token, &proof).await, StatusCode::OK);
 }
@@ -141,6 +142,7 @@ async fn negative_wrong_htm_rejected() {
         REQUEST_HTU,
         now_unix_secs(),
         "jti-htm",
+        Some(&fx.token),
     );
     assert_eq!(
         drive(&fx.router, &fx.token, &proof).await,
@@ -159,6 +161,7 @@ async fn negative_wrong_htu_rejected() {
         "http://127.0.0.1/api/somewhere-else",
         now_unix_secs(),
         "jti-htu",
+        Some(&fx.token),
     );
     assert_eq!(
         drive(&fx.router, &fx.token, &proof).await,
@@ -180,6 +183,7 @@ async fn negative_stale_iat_rejected() {
         REQUEST_HTU,
         now.saturating_sub(600),
         "jti-stale",
+        Some(&fx.token),
     );
     assert_eq!(
         drive(&fx.router, &fx.token, &proof).await,
@@ -202,6 +206,7 @@ async fn negative_replayed_jti_rejected() {
         REQUEST_HTU,
         now_unix_secs(),
         "jti-replay",
+        Some(&fx.token),
     );
     // First: accepted.
     assert_eq!(drive(&fx.router, &fx.token, &proof).await, StatusCode::OK);
@@ -227,6 +232,7 @@ async fn negative_jkt_mismatch_rejected() {
         REQUEST_HTU,
         now_unix_secs(),
         "jti-jkt",
+        Some(&fx.token),
     );
     assert_eq!(
         drive(&fx.router, &fx.token, &proof).await,
@@ -287,5 +293,83 @@ async fn negative_bad_signature_rejected() {
     assert_eq!(
         drive(&fx.router, &fx.token, &proof).await,
         StatusCode::UNAUTHORIZED
+    );
+}
+
+// ───────────── SC-005(i): ath mismatch (proof-to-token substitution) ─────
+//
+// FR-022a (RFC 9449 §4.2): a proof minted against a DIFFERENT access
+// token's bytes — even if every other property is valid — MUST be
+// rejected. This is the substitution-resistance defense; without it,
+// a captured DPoP proof can be paired with any access token that
+// happens to share the same DPoP key.
+
+#[tokio::test]
+async fn negative_ath_mismatch_rejected() {
+    let fx = setup_fixture(10).await;
+    // Mint a SECOND token (with a different sub) using the same key —
+    // this gives us a valid-but-different access token whose wire-form
+    // bytes differ from fx.token. The proof binds to the second token's
+    // bytes via ath, but the request presents fx.token in Authorization.
+    let cnf_jkt = apokryphos_server::auth::testing::es256_thumbprint_b64url(
+        fx.signing_key.verifying_key(),
+    );
+    let iss = fx
+        .mock
+        .issuer_url()
+        .as_str()
+        .trim_end_matches('/')
+        .to_string();
+    let now = now_unix_secs();
+    let other_token = apokryphos_server::auth::testing::mint_es256_token(
+        &MintTokenClaims {
+            sub: "vault-other".to_string(),
+            aud: VAULT_AUD.to_string(),
+            iss,
+            iat: now,
+            exp: now + 3600,
+            nbf: None,
+            cnf_jkt,
+        },
+        &fx.signing_key,
+        Some(TEST_KID),
+        false,
+    );
+    let proof = mint_es256_dpop_proof(
+        &fx.signing_key,
+        "GET",
+        REQUEST_HTU,
+        now_unix_secs(),
+        "jti-ath-mismatch",
+        Some(&other_token), // binds proof to other_token, NOT fx.token
+    );
+    assert_eq!(
+        drive(&fx.router, &fx.token, &proof).await,
+        StatusCode::UNAUTHORIZED,
+        "proof bound to a different token's bytes MUST be rejected"
+    );
+}
+
+// ───────────── SC-005(j): missing ath claim ─────────────────────────────
+//
+// FR-022a forbids bearer-token-style DPoP proofs (key+method+URI bound
+// but not token-bound). A proof that omits `ath` entirely MUST be
+// rejected even if everything else is valid.
+
+#[tokio::test]
+async fn negative_missing_ath_rejected() {
+    let fx = setup_fixture(11).await;
+    let proof = mint_es256_dpop_proof(
+        &fx.signing_key,
+        "GET",
+        REQUEST_HTU,
+        now_unix_secs(),
+        "jti-ath-missing",
+        None, // omit the ath claim
+    );
+    assert_eq!(
+        drive(&fx.router, &fx.token, &proof).await,
+        StatusCode::UNAUTHORIZED,
+        "proof without ath MUST be rejected (no bearer-style DPoP)"
     );
 }

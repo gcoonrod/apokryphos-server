@@ -106,9 +106,9 @@ fn mint_token(fixture: &Fixture, sub: &str) -> String {
     mint_es256_token(&claims, &fixture.signing_key, Some(TEST_KID), false)
 }
 
-fn mint_proof(fixture: &Fixture, htm: &str, htu: &str, jti: &str) -> String {
+fn mint_proof(fixture: &Fixture, token: &str, htm: &str, htu: &str, jti: &str) -> String {
     let now = now_unix_secs();
-    mint_es256_dpop_proof(&fixture.signing_key, htm, htu, now, jti)
+    mint_es256_dpop_proof(&fixture.signing_key, htm, htu, now, jti, Some(token))
 }
 
 // ─────────────────────── Positive control (SC-001) ───────────────────────
@@ -124,7 +124,7 @@ async fn whoami_vault_happy_path_returns_200_with_sub() {
     // match what the middleware's build_effective_uri produces given the
     // default EffectiveScheme::Http + the request's Host header.
     let proof_htu = "http://127.0.0.1/api/whoami";
-    let proof = mint_proof(&fixture, "GET", proof_htu, "jti-happy-1");
+    let proof = mint_proof(&fixture, &token, "GET", proof_htu, "jti-happy-1");
 
     let request = Request::builder()
         .method(Method::GET)
@@ -235,7 +235,7 @@ async fn whoami_vault_replayed_dpop_jti_returns_401() {
     let fixture = setup_fixture().await;
     let token = mint_token(&fixture, "vault-user-42");
     let proof_htu = "http://127.0.0.1/api/whoami";
-    let proof = mint_proof(&fixture, "GET", proof_htu, "jti-replay-test");
+    let proof = mint_proof(&fixture, &token, "GET", proof_htu, "jti-replay-test");
 
     let build_req = || {
         Request::builder()
