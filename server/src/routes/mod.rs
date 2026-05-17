@@ -1,16 +1,17 @@
 //! HTTP router assembly (FR-019..022, FR-030, Clarify-Q1, invariants R1..R7).
 //!
-//! Two routes are registered in the production router:
+//! Three routes are registered in the production router:
 //!   * `/health` — unauthenticated; the handler dispatches on method
 //!     internally (`GET` returns the JSON body, every other method falls
 //!     through to a 404 byte-identical to the path-mismatch fallback,
 //!     Clarify-Q1).
 //!   * `/api/whoami` — vault-guarded GET (Phase 3 FR-027). Mounted only
-//!     when the caller supplies the optional `vault_ctx` + `replay_store`
-//!     parameters. Lives in the `api` submodule so its 405→404 conversion
-//!     (FR-030) is colocated with the handler; the guard is layered on
-//!     the GET method specifically so non-GET requests never invoke the
-//!     auth pipeline.
+//!     when the caller supplies `vault_ctx` + `replay_store`.
+//!   * `/admin/whoami` — admin-guarded GET (Phase 3 FR-028). Mounted only
+//!     when the caller supplies `admin_ctx` + `replay_store`. The vault
+//!     and admin route subtrees use structurally distinct guard types
+//!     (`VaultGuard` vs `AdminGuard`), so mixing audiences at router
+//!     construction is a compile error.
 //!
 //! ## Why `any(...)` instead of `get(...)` for `/health` (R13 amendment)
 //!
@@ -22,6 +23,7 @@
 //! method check is the structural way to comply; the plan's prohibition
 //! on `any` was based on a misreading of axum 0.8's actual API.
 
+mod admin;
 mod api;
 mod health;
 
@@ -56,20 +58,23 @@ use crate::proxy_trust::{self, EffectiveAddress};
 pub fn build_router(
     state: AppState,
     vault_ctx: Option<Arc<OidcContext>>,
+    admin_ctx: Option<Arc<OidcContext>>,
     replay_store: Option<Arc<JtiReplayStore>>,
 ) -> Router {
     let mut router = Router::new().route("/health", any(health::handle_health));
 
-    if let (Some(ctx), Some(replay)) = (vault_ctx, replay_store) {
-        // Vault subtree (`/api/*`). The guard is layered on the GET
-        // method INSIDE `vault_routes` (not on the Router itself), so
-        // non-GET methods on /api/whoami return 404 via the
-        // method_not_allowed_fallback without ever invoking the auth
-        // pipeline. This closes the FR-030 leak that PR #4 review
-        // identified: a guard layered at the Router level would return
-        // 401 for non-GET requests, revealing that the route exists.
-        let vault_routes = api::vault_routes(ctx, replay);
-        router = router.merge(vault_routes);
+    // Vault subtree (`/api/*`) and admin subtree (`/admin/*`) share the
+    // single `JtiReplayStore` (cross-context replay is fenced at the
+    // `JtiKey` level via the per-audience tag byte — see auth::replay).
+    // Each subtree's guard is layered INSIDE its `*_routes` builder
+    // (not on the Router) so non-GET methods short-circuit through the
+    // any(handler) dispatcher to a byte-shape-identical 404, never
+    // returning a 401 that would reveal the route's existence (FR-030).
+    if let (Some(ctx), Some(replay)) = (vault_ctx, replay_store.clone()) {
+        router = router.merge(api::vault_routes(ctx, replay));
+    }
+    if let (Some(ctx), Some(replay)) = (admin_ctx, replay_store) {
+        router = router.merge(admin::admin_routes(ctx, replay));
     }
 
     router

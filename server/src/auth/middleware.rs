@@ -31,7 +31,9 @@ use crate::auth::context::OidcContext;
 use crate::auth::dpop::validate_proof;
 use crate::auth::failure::{AuthFailure, log_failure, respond_401, respond_503_memory_pressure};
 use crate::auth::replay::JtiReplayStore;
-use crate::auth::subject::{VaultSubject, VaultSubjectExtension};
+use crate::auth::subject::{
+    AdminSubject, AdminSubjectExtension, VaultSubject, VaultSubjectExtension,
+};
 use crate::auth::token::validate_token;
 use crate::proxy_trust::{EffectiveAddress, EffectiveScheme};
 
@@ -121,9 +123,11 @@ where
                 .map(|e| e.addr)
                 .unwrap_or_else(|| std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
 
-            match authenticate_vault(&mut request, &ctx, &replay).await {
-                Ok(subject) => {
-                    request.extensions_mut().insert(VaultSubjectExtension(subject));
+            match authenticate_common(&mut request, &ctx, &replay).await {
+                Ok(sub) => {
+                    request
+                        .extensions_mut()
+                        .insert(VaultSubjectExtension(VaultSubject::new(sub)));
                     inner.call(request).await
                 }
                 Err(failure) => {
@@ -144,12 +148,17 @@ where
 }
 
 /// Extract the `Authorization` and `DPoP` headers, run the token + DPoP
-/// pipeline, and return a `VaultSubject` on success.
-async fn authenticate_vault(
+/// pipeline, and return the validated `sub` claim as a `String`. The
+/// caller (VaultGuardService or AdminGuardService) wraps this into the
+/// audience-appropriate `VaultSubject` / `AdminSubject` and inserts the
+/// matching extension key — the type-fence guarantee (FR-024 / FR-025)
+/// is preserved because neither subject's constructor is reachable
+/// outside `auth::*`.
+async fn authenticate_common(
     request: &mut Request,
     ctx: &OidcContext,
     replay: &JtiReplayStore,
-) -> Result<VaultSubject, AuthFailure> {
+) -> Result<String, AuthFailure> {
     // ── Extract Authorization: DPoP <token> ─────────────────────────────
     // RFC 9110 §11.1: HTTP authentication scheme tokens are case-insensitive.
     // Split on the first ASCII space; compare the scheme via
@@ -205,7 +214,7 @@ async fn authenticate_vault(
     )
     .await?;
 
-    Ok(VaultSubject::new(access_token.sub().to_string()))
+    Ok(access_token.sub().to_string())
 }
 
 /// Construct the effective request URI from Phase 2's resolved
@@ -237,4 +246,109 @@ fn build_effective_uri(request: &Request) -> Result<url::Url, AuthFailure> {
 
     let raw = format!("{}://{}{}", scheme, authority, path_and_query);
     url::Url::parse(&raw).map_err(|_| AuthFailure::ProofHtuMismatch)
+}
+
+// ───────────────────────────── AdminGuard (T032) ─────────────────────────────
+//
+// `AdminGuard` is a STRUCTURALLY DISTINCT type from `VaultGuard`. Mixing
+// them at router construction is a compile error because each guard's
+// `Layer::Service` associated type is a different concrete struct, and
+// `axum::Router::route(..., handler.layer(guard))` requires the layered
+// service's response/error types to match the route signature.
+//
+// The two guards share `authenticate_common` (header parsing → token
+// validation → DPoP validation), but each one wraps the returned `sub`
+// string into its own subject type and inserts its own audience-tagged
+// extension key. The handler then asks for `VaultSubject` (vault routes)
+// or `AdminSubject` (admin routes), and only the matching extension is
+// ever present on a request that flowed through the matching guard.
+
+/// Admin-audience guard. Mirror of `VaultGuard` but bound to the admin
+/// `OidcContext` and inserts `AdminSubjectExtension` on success.
+#[derive(Clone)]
+pub struct AdminGuard {
+    ctx: Arc<OidcContext>,
+    replay: Arc<JtiReplayStore>,
+}
+
+/// Build an `AdminGuard` bound to the given context + replay store.
+pub fn admin_guard(ctx: Arc<OidcContext>, replay: Arc<JtiReplayStore>) -> AdminGuard {
+    AdminGuard { ctx, replay }
+}
+
+impl<S> Layer<S> for AdminGuard {
+    type Service = AdminGuardService<S>;
+    fn layer(&self, inner: S) -> Self::Service {
+        AdminGuardService {
+            inner,
+            ctx: Arc::clone(&self.ctx),
+            replay: Arc::clone(&self.replay),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct AdminGuardService<S> {
+    inner: S,
+    ctx: Arc<OidcContext>,
+    replay: Arc<JtiReplayStore>,
+}
+
+impl<S> Service<Request> for AdminGuardService<S>
+where
+    S: Service<Request, Response = Response, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = std::convert::Infallible;
+    type Future =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: Request) -> Self::Future {
+        let ctx = Arc::clone(&self.ctx);
+        let replay = Arc::clone(&self.replay);
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+
+        // FR-030 leak prevention (mirror of VaultGuardService::call): the
+        // guard MUST pass non-GET methods through to the inner service
+        // without running the auth pipeline, so a POST/HEAD against the
+        // admin route returns a byte-shape-identical 404 from the
+        // any(handler) dispatcher rather than a 401-with-WWW-Authenticate
+        // that would reveal the route's existence.
+        if request.method() != axum::http::Method::GET {
+            return Box::pin(async move { inner.call(request).await });
+        }
+
+        Box::pin(async move {
+            let client_addr = request
+                .extensions()
+                .get::<EffectiveAddress>()
+                .map(|e| e.addr)
+                .unwrap_or_else(|| std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
+            match authenticate_common(&mut request, &ctx, &replay).await {
+                Ok(sub) => {
+                    request
+                        .extensions_mut()
+                        .insert(AdminSubjectExtension(AdminSubject::new(sub)));
+                    inner.call(request).await
+                }
+                Err(failure) => {
+                    log_failure(&failure, client_addr);
+                    match failure {
+                        AuthFailure::MemoryPressure => Ok(respond_503_memory_pressure()),
+                        _ => Ok(respond_401()),
+                    }
+                }
+            }
+        })
+    }
 }
