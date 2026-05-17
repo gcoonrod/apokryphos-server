@@ -25,7 +25,6 @@
 //! once at validation time so the per-request DPoP `jkt` comparison
 //! (FR-022, in `auth::dpop`) can use `ct_eq_32` against the raw bytes.
 
-use std::time::SystemTime;
 
 use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};

@@ -117,9 +117,14 @@ pub fn respond_401() -> Response<Body> {
 /// these out by running at `--log-level WARN` or higher; the events
 /// remain useful at the default `INFO` level (which suppresses DEBUG)
 /// only for active troubleshooting.
-pub(in crate::auth) fn log_failure(failure: &AuthFailure, effective_address: IpAddr) {
+pub(in crate::auth) fn log_failure(
+    failure: &AuthFailure,
+    effective_address: IpAddr,
+    audience: &'static str,
+) {
     tracing::debug!(
         category = failure.category(),
+        audience = audience,
         client = %effective_address,
         "auth.failure"
     );

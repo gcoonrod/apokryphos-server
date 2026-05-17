@@ -133,10 +133,10 @@ where
                 Err(failure) => {
                     // FR-033: emit a category-bearing DEBUG event before
                     // collapsing to the uniform 401/503 response. The
-                    // event carries the failure category + effective
-                    // client address — never the raw token, proof,
-                    // or jti (FR-031, FR-032).
-                    log_failure(&failure, client_addr);
+                    // event carries the failure category, audience tag,
+                    // and effective client address — never the raw
+                    // token, proof, or jti (FR-031, FR-032).
+                    log_failure(&failure, client_addr, ctx.tag.name());
                     match failure {
                         AuthFailure::MemoryPressure => Ok(respond_503_memory_pressure()),
                         _ => Ok(respond_401()),
@@ -342,7 +342,7 @@ where
                     inner.call(request).await
                 }
                 Err(failure) => {
-                    log_failure(&failure, client_addr);
+                    log_failure(&failure, client_addr, ctx.tag.name());
                     match failure {
                         AuthFailure::MemoryPressure => Ok(respond_503_memory_pressure()),
                         _ => Ok(respond_401()),
