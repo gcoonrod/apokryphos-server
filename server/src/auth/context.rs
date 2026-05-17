@@ -24,6 +24,7 @@ use std::sync::atomic::AtomicU64;
 
 use arc_swap::ArcSwap;
 use openidconnect::reqwest;
+use tokio::sync::Notify;
 use url::Url;
 
 use crate::auth::discovery::{Discovery, DiscoveryFetchError, fetch_discovery};
@@ -75,6 +76,21 @@ pub struct OidcContext {
     pub jwks: ArcSwap<Jwks>,
     pub discovery: ArcSwap<Discovery>,
     pub auth_config: Arc<AuthConfig>,
+
+    /// HTTP client used for both scheduled and on-demand JWKS/discovery
+    /// refreshes. `reqwest::Client` is internally `Arc`'d, so cloning is
+    /// cheap — each context stores its own clone of the shared client
+    /// configured in `app::run` (with redirect::Policy::none() and a
+    /// bounded timeout).
+    pub(crate) http_client: reqwest::Client,
+
+    /// R6 single-flight signaling. `notify_waiters` is called by the
+    /// task that successfully claims the on-demand-refresh slot (via
+    /// the CAS on `last_on_demand_refresh`) once the JWKS fetch +
+    /// install has completed (whether successfully or not). Waiters
+    /// — concurrent requests that observed the rate-limit window —
+    /// re-check the JWKS after waking.
+    pub(crate) refresh_notify: Notify,
 
     /// R6 on-demand-refresh rate limit: seconds-since-Unix-epoch of the
     /// last attempt. Initialized to 0 (no prior attempt). Updated via
@@ -192,6 +208,8 @@ pub async fn init_single_context(
         jwks: ArcSwap::from_pointee(jwks),
         discovery: ArcSwap::from_pointee(discovery),
         auth_config: auth_cfg,
+        http_client: http_client.clone(),
+        refresh_notify: Notify::new(),
         last_on_demand_refresh: AtomicU64::new(0),
         other: OnceLock::new(),
     }))

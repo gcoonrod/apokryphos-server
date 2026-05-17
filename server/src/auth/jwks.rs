@@ -172,6 +172,88 @@ pub async fn fetch_jwks(
     parse_jwks(raw)
 }
 
+/// T031: single-flight, rate-limited on-demand JWKS refresh (R6, FR-004).
+///
+/// Called from `token::validate_token` when signature verification has
+/// failed against the currently-cached JWKS. The contract is:
+///
+///   - **Winner path** (one task per rate-limit window): atomically claim
+///     the `last_on_demand_refresh` slot via `compare_exchange`. Fetch
+///     the JWKS via `fetch_jwks` and install through
+///     `auth::context::install_refreshed_jwks` (which runs the FR-007
+///     runtime overlap check). When the fetch + install completes —
+///     successfully or not — wake every waiter with `notify_waiters`.
+///     Returns `true` only on a successful install, so the caller knows
+///     a retry is meaningful.
+///   - **Loser path** (all later callers within the same window): the
+///     CAS fails. Await `refresh_notify` with a small timeout
+///     (`on_demand_refresh_min_interval_secs / 2`). On wake-up, return
+///     `true` so the caller re-checks the JWKS once. On timeout, return
+///     `false`.
+///   - **Stale-but-uncontended path**: the CAS succeeds (because the
+///     stored timestamp is older than `now - interval`) — same as
+///     winner path.
+///
+/// The returned `bool` is "**caller may retry once**", not "fetch
+/// succeeded". A fetch failure that completes within the timeout still
+/// produces `true` for waiters (we woke them; they should re-check
+/// because the rate-limit window has reset). The retry will fail again
+/// against the unchanged JWKS, which is the correct semantics: the
+/// caller's signature error becomes the final answer.
+pub(crate) async fn on_demand_refresh(ctx: &crate::auth::context::OidcContext) -> bool {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    let interval_secs = ctx.auth_config.on_demand_refresh_min_interval_secs;
+    let wait_timeout = Duration::from_secs(interval_secs.saturating_div(2).max(1));
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let prev = ctx.last_on_demand_refresh.load(Ordering::Acquire);
+    let cutoff = prev.saturating_add(interval_secs);
+
+    if now_secs < cutoff {
+        // Inside the rate-limit window. Some other task either already
+        // ran the refresh or is running it now; wait briefly for the
+        // Notify and let the caller re-check the JWKS on wake.
+        return tokio::time::timeout(wait_timeout, ctx.refresh_notify.notified())
+            .await
+            .is_ok();
+    }
+
+    // Try to claim the slot. If another task beat us to the CAS by
+    // microseconds, fall back to the waiter path — the winner will
+    // notify us when its fetch completes.
+    if ctx
+        .last_on_demand_refresh
+        .compare_exchange(prev, now_secs, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return tokio::time::timeout(wait_timeout, ctx.refresh_notify.notified())
+            .await
+            .is_ok();
+    }
+
+    // Winner path. Fetch + install inline; wake waiters regardless.
+    let jwks_uri = ctx.discovery.load().jwks_uri.clone();
+    let install_result = match fetch_jwks(&ctx.http_client, &jwks_uri).await {
+        Ok(new_jwks) => crate::auth::context::install_refreshed_jwks(ctx, new_jwks).is_ok(),
+        Err(_) => {
+            tracing::warn!(
+                event = "jwks.on_demand_refresh_failed",
+                audience = ctx.tag.name(),
+                "on-demand JWKS refresh failed (network or parse error)"
+            );
+            false
+        }
+    };
+    ctx.refresh_notify.notify_waiters();
+    install_result
+}
+
 /// Parse a raw `JwkSet` into the FR-010a-filtered indexed `Jwks`. Public
 /// for tests; the production fetch goes through `fetch_jwks`.
 pub fn parse_jwks(raw: JwkSet) -> Result<Jwks, JwksFetchError> {
