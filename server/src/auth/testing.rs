@@ -97,10 +97,13 @@ pub fn es256_public_jwk(
 }
 
 /// Per-mock state — the JWKS the provider serves plus per-endpoint
-/// request counters that tests assert on.
+/// request counters that tests assert on. `jwks` is held inside an
+/// `ArcSwap` so a test can swap it mid-run (T042's FR-007 runtime
+/// overlap fixture relies on this). Reads stay lock-free; writers
+/// observe the swap atomically on the next request.
 #[derive(Clone)]
 struct MockState {
-    jwks: Arc<Value>,
+    jwks: Arc<arc_swap::ArcSwap<Value>>,
     discovery_fetches: Arc<AtomicU64>,
     jwks_fetches: Arc<AtomicU64>,
     base_url: Arc<Url>,
@@ -134,7 +137,7 @@ impl MockOidcProvider {
         let base_url = Url::parse(&format!("http://{}", addr)).expect("valid base URL");
 
         let state = MockState {
-            jwks: Arc::new(jwks),
+            jwks: Arc::new(arc_swap::ArcSwap::from_pointee(jwks)),
             discovery_fetches: Arc::new(AtomicU64::new(0)),
             jwks_fetches: Arc::new(AtomicU64::new(0)),
             base_url: Arc::new(base_url),
@@ -182,6 +185,17 @@ impl MockOidcProvider {
     pub fn shutdown(&self) {
         self.task.abort();
     }
+
+    /// Swap the JWKS served at `/jwks.json` to a new document. Subsequent
+    /// requests (including scheduled or on-demand JWKS refreshes from
+    /// the system under test) observe the new value atomically. Used by
+    /// T042 to simulate a runtime overlap: the vault provider's JWKS
+    /// changes to include a key already in the admin context's JWKS,
+    /// and the FR-007 contract is that `install_refreshed_jwks` refuses
+    /// the new value rather than exiting the process.
+    pub fn set_jwks(&self, new_jwks: Value) {
+        self.state.jwks.store(Arc::new(new_jwks));
+    }
 }
 
 impl Drop for MockOidcProvider {
@@ -208,7 +222,10 @@ async fn serve_discovery(State(state): State<MockState>) -> Json<Value> {
 
 async fn serve_jwks(State(state): State<MockState>) -> Json<Value> {
     state.jwks_fetches.fetch_add(1, Ordering::SeqCst);
-    Json((*state.jwks).clone())
+    // `load_full` returns `Arc<Value>`; deref once to `&Value` and clone
+    // for the Json<T> response body. Reads through `ArcSwap` are
+    // lock-free even when `set_jwks` swaps the underlying pointer.
+    Json((*state.jwks.load_full()).clone())
 }
 
 // ────────────────────── Token + DPoP mint helpers ────────────────────────
