@@ -106,7 +106,23 @@ struct MockState {
     jwks: Arc<arc_swap::ArcSwap<Value>>,
     discovery_fetches: Arc<AtomicU64>,
     jwks_fetches: Arc<AtomicU64>,
+    /// Counter for the alternate `/jwks-v2.json` endpoint. T052
+    /// sub-case (j) (jwks_uri-change propagation) reconfigures
+    /// discovery to advertise this path and asserts the counter
+    /// advances on the next scheduled JWKS fetch.
+    jwks_v2_fetches: Arc<std::sync::atomic::AtomicU64>,
     base_url: Arc<Url>,
+    /// Discovery-doc `jwks_uri` override. Set via `set_discovery_jwks_uri`;
+    /// initialised to the mock's own `/jwks.json` path. T052 sub-case (j)
+    /// flips this to `/jwks-v2.json` to test propagation through
+    /// `discovery::scheduled_refresh_task` → `jwks::scheduled_refresh_task`.
+    discovery_jwks_uri: Arc<arc_swap::ArcSwap<String>>,
+    /// HTTP status code to return on the next `/jwks.json` request.
+    /// `0` means "no override, return 200 OK". Non-zero values serve
+    /// that status code (with empty body, no JWKS doc). T052 uses this
+    /// to simulate transient JWKS failures and assert that the cached
+    /// JWKS is retained per FR-003a.
+    jwks_status_override: Arc<std::sync::atomic::AtomicU16>,
 }
 
 /// In-process OIDC fixture: a tiny `axum::Router` bound to 127.0.0.1:0 that
@@ -140,7 +156,12 @@ impl MockOidcProvider {
             jwks: Arc::new(arc_swap::ArcSwap::from_pointee(jwks)),
             discovery_fetches: Arc::new(AtomicU64::new(0)),
             jwks_fetches: Arc::new(AtomicU64::new(0)),
+            jwks_v2_fetches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             base_url: Arc::new(base_url),
+            discovery_jwks_uri: Arc::new(arc_swap::ArcSwap::from_pointee(
+                "/jwks.json".to_string(),
+            )),
+            jwks_status_override: Arc::new(std::sync::atomic::AtomicU16::new(0)),
         };
 
         let router = Router::new()
@@ -149,6 +170,7 @@ impl MockOidcProvider {
                 get(serve_discovery),
             )
             .route("/jwks.json", get(serve_jwks))
+            .route("/jwks-v2.json", get(serve_jwks_v2))
             .with_state(state.clone());
 
         let server = axum::serve(listener, router.into_make_service());
@@ -196,6 +218,38 @@ impl MockOidcProvider {
     pub fn set_jwks(&self, new_jwks: Value) {
         self.state.jwks.store(Arc::new(new_jwks));
     }
+
+    /// Set an HTTP status override for the next `/jwks.json` request.
+    /// `0` clears the override (default 200 behaviour). Non-zero values
+    /// cause subsequent `/jwks.json` fetches to return that status with
+    /// no body — used by T052 to simulate transient provider failures
+    /// and verify FR-003a (cached JWKS retained on refresh failure).
+    pub fn set_jwks_status_override(&self, status: u16) {
+        self.state
+            .jwks_status_override
+            .store(status, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Reconfigure the discovery doc's advertised `jwks_uri`. Subsequent
+    /// `/.well-known/openid-configuration` fetches return a document
+    /// pointing at this path (joined onto the mock's base URL).
+    /// Default after `start` is `/jwks.json`. T052 sub-case (j) flips
+    /// this to `/jwks-v2.json` to test propagation.
+    pub fn set_discovery_jwks_uri(&self, path: &str) {
+        self.state
+            .discovery_jwks_uri
+            .store(Arc::new(path.to_string()));
+    }
+
+    /// Number of `/jwks-v2.json` requests served. Initially 0; advances
+    /// after the system under test fetches from the alternate path
+    /// (typically after `set_discovery_jwks_uri("/jwks-v2.json")` +
+    /// a discovery refresh + a JWKS refresh).
+    pub fn jwks_v2_fetch_count(&self) -> u64 {
+        self.state
+            .jwks_v2_fetches
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Drop for MockOidcProvider {
@@ -206,10 +260,11 @@ impl Drop for MockOidcProvider {
 
 async fn serve_discovery(State(state): State<MockState>) -> Json<Value> {
     state.discovery_fetches.fetch_add(1, Ordering::SeqCst);
+    let path = state.discovery_jwks_uri.load_full();
     let jwks_uri = state
         .base_url
-        .join("/jwks.json")
-        .expect("static path joins cleanly");
+        .join(path.as_str())
+        .expect("discovery_jwks_uri must be a valid path");
     Json(json!({
         "issuer": state.base_url.to_string(),
         "jwks_uri": jwks_uri.to_string(),
@@ -220,11 +275,29 @@ async fn serve_discovery(State(state): State<MockState>) -> Json<Value> {
     }))
 }
 
-async fn serve_jwks(State(state): State<MockState>) -> Json<Value> {
+async fn serve_jwks(
+    State(state): State<MockState>,
+) -> Result<Json<Value>, (axum::http::StatusCode, &'static str)> {
     state.jwks_fetches.fetch_add(1, Ordering::SeqCst);
-    // `load_full` returns `Arc<Value>`; deref once to `&Value` and clone
-    // for the Json<T> response body. Reads through `ArcSwap` are
-    // lock-free even when `set_jwks` swaps the underlying pointer.
+    let override_status = state.jwks_status_override.load(Ordering::SeqCst);
+    if override_status != 0 {
+        // Caller asked for a non-200 response. Return the status with a
+        // brief literal body so the client sees a definitive error.
+        let code = axum::http::StatusCode::from_u16(override_status)
+            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        return Err((code, "mock /jwks.json status override"));
+    }
+    Ok(Json((*state.jwks.load_full()).clone()))
+}
+
+/// Alternate JWKS endpoint at `/jwks-v2.json`. Used by T052 sub-case (j)
+/// to verify that a `jwks_uri` change in the discovery doc is honored
+/// by the next scheduled JWKS refresh. Serves the same `state.jwks`
+/// payload — the *URL* is what's under test, not the body.
+async fn serve_jwks_v2(State(state): State<MockState>) -> Json<Value> {
+    state
+        .jwks_v2_fetches
+        .fetch_add(1, Ordering::SeqCst);
     Json((*state.jwks.load_full()).clone())
 }
 
