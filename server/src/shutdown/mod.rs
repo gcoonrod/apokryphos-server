@@ -82,7 +82,6 @@ pub async fn signal_listener_from_channel(rx: oneshot::Receiver<()>, drain_timeo
 /// and `changed()` returns `Err` once the sender drops, which is how
 /// tasks notice the parent has exited even if the watch was never
 /// flipped (defensive — shouldn't happen in practice).
-#[allow(dead_code)]
 pub type ShutdownRx = tokio::sync::watch::Receiver<bool>;
 
 /// Build a one-shot shutdown broadcaster from the installed signals.
@@ -95,7 +94,6 @@ pub type ShutdownRx = tokio::sync::watch::Receiver<bool>;
 ///
 /// The watch's initial value is `false`; the future flips it to `true`
 /// exactly once. Tasks await `rx.changed()` inside `tokio::select!`.
-#[allow(dead_code)]
 pub fn shutdown_coordinator(
     signals: InstalledSignals,
     drain_timeout: Duration,

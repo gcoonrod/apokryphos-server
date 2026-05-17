@@ -219,11 +219,12 @@ impl MockOidcProvider {
         self.state.jwks.store(Arc::new(new_jwks));
     }
 
-    /// Set an HTTP status override for the next `/jwks.json` request.
-    /// `0` clears the override (default 200 behaviour). Non-zero values
-    /// cause subsequent `/jwks.json` fetches to return that status with
-    /// no body — used by T052 to simulate transient provider failures
-    /// and verify FR-003a (cached JWKS retained on refresh failure).
+    /// Set a *persistent* HTTP status override for `/jwks.json`. Once
+    /// set, every subsequent `/jwks.json` request returns that status
+    /// with no body until the caller resets it. Pass `0` to clear the
+    /// override (restoring the default 200 + JWKS-body behaviour).
+    /// Used by T052 to simulate transient provider failures and verify
+    /// FR-003a (cached JWKS retained on refresh failure).
     pub fn set_jwks_status_override(&self, status: u16) {
         self.state
             .jwks_status_override
