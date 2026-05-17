@@ -10,11 +10,13 @@
 //!     runtime overlap check (T030, US2 — initialized after both contexts
 //!     are constructed, before refresh tasks are spawned).
 //!
-//! Phase 2 / Phase 3 first-step scope: this module lands the type +
-//! `init_single_context`. The dual-context `init_contexts`, the cross-reach
-//! wiring, `check_disjoint_jwks`, and `install_refreshed_jwks` arrive in
-//! US2 (T028–T030).
+//! US2 scope adds: `init_contexts` (dual-init + cross-reach + startup
+//! overlap check), `check_disjoint_jwks` (the FR-006 thumbprint-set
+//! disjointness test), and `install_refreshed_jwks` (the runtime-refresh
+//! variant that rejects an incoming JWKS overlap WITHOUT exiting the
+//! process per FR-007).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
@@ -26,7 +28,7 @@ use url::Url;
 
 use crate::auth::discovery::{Discovery, DiscoveryFetchError, fetch_discovery};
 use crate::auth::jwks::{Jwks, JwksFetchError, fetch_jwks};
-use crate::config::{AuthConfig, OidcAudienceConfig};
+use crate::config::{AuthConfig, OidcAudienceConfig, ServerConfig};
 
 /// Audience discriminator. Used by `OidcContext` for the cross-context
 /// `JtiKey` fence (replay.rs's `audience_tag` byte) and for diagnostic
@@ -77,21 +79,47 @@ pub struct OidcContext {
     /// R6 on-demand-refresh rate limit: seconds-since-Unix-epoch of the
     /// last attempt. Initialized to 0 (no prior attempt). Updated via
     /// `compare_exchange` so multiple in-flight requests collapse to one
-    /// fetch per rate-limit window. Wired up in T031 (US2).
+    /// fetch per rate-limit window. Read/written by T031's
+    /// `auth::jwks::on_demand_refresh`.
     #[allow(dead_code)]
-    last_on_demand_refresh: AtomicU64,
+    pub(crate) last_on_demand_refresh: AtomicU64,
 
     /// Cross-context reach (US2 / T028–T030). `Weak` breaks the
     /// `Arc<OidcContext> ⇌ Arc<OidcContext>` cycle that two strong
     /// references would create. Set by `init_contexts` AFTER both
     /// contexts are constructed but BEFORE any refresh task runs;
-    /// `set()` is one-shot (`OnceLock::set` returns `Err` on second call).
-    ///
-    /// Phase 3 single-context scope: this field exists but is never set.
-    /// US2 (T028) wires both directions in `init_contexts`.
-    #[allow(dead_code)]
+    /// `set()` is one-shot — calling it twice is a programmer error and
+    /// panics, because `init_contexts` is the single wiring point.
     other: OnceLock<Weak<OidcContext>>,
 }
+
+/// Runtime overlap diagnostic returned by `check_disjoint_jwks` and
+/// `install_refreshed_jwks`. The `Display` impl names ONLY the audience
+/// tag of the side that brought in the duplicate key — never the key's
+/// thumbprint or any JWK byte. Constitution Principle IV: an attacker
+/// who can read logs MUST NOT learn which signing key is in use.
+#[derive(Debug)]
+pub struct OverlapError {
+    /// The audience tag of the JWKS that contained a key already present
+    /// in the *other* context's JWKS. For startup (T028), this is the
+    /// `b`-side of `check_disjoint_jwks(vault, admin)` — i.e., admin.
+    /// For runtime refresh (T030), this is `self_ctx.tag` — the context
+    /// whose refresh attempt collided with the existing other-context
+    /// JWKS.
+    pub context_with_extra_key: AudienceTag,
+}
+
+impl std::fmt::Display for OverlapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "oidc contexts share signing keys; audience {} contains a key already present in the other context",
+            self.context_with_extra_key
+        )
+    }
+}
+
+impl std::error::Error for OverlapError {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContextInitError {
@@ -167,6 +195,134 @@ pub async fn init_single_context(
         last_on_demand_refresh: AtomicU64::new(0),
         other: OnceLock::new(),
     }))
+}
+
+/// T029: thumbprint-set disjointness test. Returns `Ok(())` if `a` and
+/// `b` share no JWK thumbprints; `Err(OverlapError { context_with_extra_key: b_tag })`
+/// on first match. The caller passes `b_tag` so the error names the
+/// audience whose key set is *not allowed* to contain the duplicate —
+/// at startup (T028), that's admin (since admin is the second context
+/// init'd); at runtime refresh (T030), it's `self_ctx.tag`.
+///
+/// `HashSet`'s native hasher is fine: the input is a SHA-256 thumbprint,
+/// so the worst an attacker controlling JWKS contents could do is force
+/// a 256-bit hash collision — well outside their reach. There is no
+/// adversarial input that benefits from a randomized hasher here.
+pub(crate) fn check_disjoint_jwks(
+    a: &Jwks,
+    b: &Jwks,
+    b_tag: AudienceTag,
+) -> Result<(), OverlapError> {
+    let a_thumbs: HashSet<[u8; 32]> = a.iter_thumbprints().collect();
+    for tp in b.iter_thumbprints() {
+        if a_thumbs.contains(&tp) {
+            return Err(OverlapError {
+                context_with_extra_key: b_tag,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// T028: dual-context startup constructor. Fetches discovery + JWKS for
+/// both audiences sequentially, then runs the FR-006 disjointness check.
+/// On overlap, returns `ContextInitError::JwksOverlap { context_with_extra_key: Admin }`
+/// — admin is the b-side of the check, so a key shared by both contexts
+/// is "an extra key in admin" from the disjointness check's perspective.
+///
+/// After the overlap check passes, both contexts' `other` `OnceLock`s
+/// are populated with `Weak` references to the *other* context. This
+/// MUST happen before any refresh task spawns (the runtime refresh path
+/// in `install_refreshed_jwks` requires the cross-reach to be wired).
+/// Both `set()` calls must succeed; this function is the single wiring
+/// point, so a returned `Err` from `OnceLock::set` is a programmer
+/// error and panics.
+pub async fn init_contexts(
+    cfg: &ServerConfig,
+    http_client: &reqwest::Client,
+) -> Result<(Arc<OidcContext>, Arc<OidcContext>), ContextInitError> {
+    let auth_cfg = Arc::new(cfg.auth.clone());
+    let vault_ctx = init_single_context(
+        AudienceTag::Vault,
+        &cfg.vault_oidc,
+        Arc::clone(&auth_cfg),
+        http_client,
+    )
+    .await?;
+    let admin_ctx = init_single_context(
+        AudienceTag::Admin,
+        &cfg.admin_oidc,
+        Arc::clone(&auth_cfg),
+        http_client,
+    )
+    .await?;
+
+    check_disjoint_jwks(
+        &vault_ctx.jwks.load_full(),
+        &admin_ctx.jwks.load_full(),
+        AudienceTag::Admin,
+    )
+    .map_err(|e| ContextInitError::JwksOverlap {
+        context_with_extra_key: e.context_with_extra_key,
+    })?;
+
+    vault_ctx
+        .other
+        .set(Arc::downgrade(&admin_ctx))
+        .ok()
+        .expect("context cross-reach already initialized (vault → admin)");
+    admin_ctx
+        .other
+        .set(Arc::downgrade(&vault_ctx))
+        .ok()
+        .expect("context cross-reach already initialized (admin → vault)");
+
+    Ok((vault_ctx, admin_ctx))
+}
+
+/// T030: runtime JWKS install with disjointness check. Called by both
+/// the scheduled refresh task (T049) and the on-demand refresh path
+/// (T031). Per FR-007, an overlap detected at runtime MUST NOT exit the
+/// process — the new JWKS is rejected and the previous one stays in
+/// place, with a `tracing::error!` diagnostic emitted at the documented
+/// shape (audience tag only, no key material).
+///
+/// `Weak::upgrade` on `self_ctx.other` should never fail in normal
+/// operation (both `Arc`s are held by `app::run`'s lifetime), but if it
+/// does we refuse the install rather than skip the disjointness check.
+/// Refusing-on-upgrade-failure means a transient impossible-state can't
+/// silently disable the cross-context overlap guarantee.
+pub(crate) fn install_refreshed_jwks(
+    self_ctx: &OidcContext,
+    new_jwks: Jwks,
+) -> Result<(), OverlapError> {
+    let Some(other_arc) = self_ctx
+        .other
+        .get()
+        .and_then(|weak| weak.upgrade())
+    else {
+        tracing::error!(
+            event = "context.refresh.cross_reach_failed",
+            audience = self_ctx.tag.name(),
+            "refused JWKS install: cross-context reach not initialized or other context dropped"
+        );
+        return Err(OverlapError {
+            context_with_extra_key: self_ctx.tag,
+        });
+    };
+
+    let other_jwks = other_arc.jwks.load_full();
+    if let Err(e) = check_disjoint_jwks(&other_jwks, &new_jwks, self_ctx.tag) {
+        tracing::error!(
+            event = "context.refresh.overlap_rejected",
+            audience = self_ctx.tag.name(),
+            "refused JWKS install: new key set overlaps with other context"
+        );
+        return Err(e);
+    }
+
+    self_ctx.jwks.store(Arc::new(new_jwks));
+    Ok(())
 }
 
 // The inline test module is split in two: the audience-tag tests are
@@ -281,6 +437,155 @@ mod tests {
         let discovery = ctx.discovery.load_full();
         let expected_jwks_uri = mock.issuer_url().join("/jwks.json").unwrap();
         assert_eq!(discovery.jwks_uri.as_str(), expected_jwks_uri.as_str());
+    }
+
+    /// T029 unit test: `check_disjoint_jwks` returns Ok for two
+    /// thumbprint-disjoint JWKS, and Err naming the b-side audience when
+    /// a key thumbprint appears in both.
+    #[tokio::test]
+    async fn check_disjoint_jwks_detects_thumbprint_overlap() {
+        use crate::auth::jwks::parse_jwks;
+        use jsonwebtoken::jwk::JwkSet;
+
+        let mut rng = deterministic_rng(7);
+        let key_a: SigningKey = generate_es256_keypair(&mut rng);
+        let key_b: SigningKey = generate_es256_keypair(&mut rng);
+        let jwk_a = es256_public_jwk(key_a.verifying_key(), Some("a"));
+        let jwk_b = es256_public_jwk(key_b.verifying_key(), Some("b"));
+
+        let jwks_a: JwkSet = serde_json::from_value(json!({ "keys": [&jwk_a] })).unwrap();
+        let jwks_b: JwkSet = serde_json::from_value(json!({ "keys": [&jwk_b] })).unwrap();
+        let jwks_both: JwkSet =
+            serde_json::from_value(json!({ "keys": [&jwk_a, &jwk_b] })).unwrap();
+
+        let parsed_a = parse_jwks(jwks_a).unwrap();
+        let parsed_b = parse_jwks(jwks_b).unwrap();
+        let parsed_both = parse_jwks(jwks_both).unwrap();
+
+        // Disjoint pair → Ok.
+        assert!(check_disjoint_jwks(&parsed_a, &parsed_b, AudienceTag::Admin).is_ok());
+
+        // Overlap → Err names the b-side audience the caller passed in.
+        let err = check_disjoint_jwks(&parsed_a, &parsed_both, AudienceTag::Admin)
+            .expect_err("overlap must be detected");
+        assert_eq!(err.context_with_extra_key, AudienceTag::Admin);
+        let display = err.to_string();
+        assert!(display.contains("admin"));
+        // No thumbprint hex / no base64 substring of the offending key in
+        // the Display output. Test by asserting the JWK's `x` / `y`
+        // coordinates don't appear in the diagnostic.
+        if let serde_json::Value::String(x) = &jwk_a["x"] {
+            assert!(
+                !display.contains(x.as_str()),
+                "Display must not leak JWK x coordinate"
+            );
+        }
+    }
+
+    /// T028 + T029 integration: two mock providers with deliberately
+    /// overlapping JWKS → `init_contexts` returns `JwksOverlap` and the
+    /// error message names the admin audience, never key material.
+    #[tokio::test]
+    async fn init_contexts_rejects_overlapping_jwks() {
+        use crate::config::{ServerConfig, StorageBackend};
+
+        let mut rng = deterministic_rng(13);
+        let shared_key: SigningKey = generate_es256_keypair(&mut rng);
+        let shared_jwk = es256_public_jwk(shared_key.verifying_key(), Some("shared"));
+        let vault_only: SigningKey = generate_es256_keypair(&mut rng);
+        let vault_jwk = es256_public_jwk(vault_only.verifying_key(), Some("vault-only"));
+
+        let vault_jwks_doc = json!({ "keys": [&vault_jwk, &shared_jwk] });
+        let admin_jwks_doc = json!({ "keys": [&shared_jwk] });
+        let vault_mock = MockOidcProvider::start(vault_jwks_doc).await;
+        let admin_mock = MockOidcProvider::start(admin_jwks_doc).await;
+
+        let cfg = ServerConfig {
+            bind_address: "127.0.0.1:0".parse().unwrap(),
+            block_size_bytes: 1024 * 1024,
+            storage_backend: StorageBackend::None,
+            trusted_proxies: vec![],
+            // Direct struct construction bypasses OidcAudienceConfig::new's
+            // HTTPS check — mocks bind HTTP loopback. Production always
+            // routes through the validating constructor.
+            vault_oidc: OidcAudienceConfig {
+                issuer_url: vault_mock.issuer_url(),
+                audience: "vault-aud".to_string(),
+            },
+            admin_oidc: OidcAudienceConfig {
+                issuer_url: admin_mock.issuer_url(),
+                audience: "admin-aud".to_string(),
+            },
+            drain_timeout: std::time::Duration::from_secs(5),
+            auth: AuthConfig::default(),
+        };
+        let http_client = reqwest::Client::new();
+        let result = init_contexts(&cfg, &http_client).await;
+        match result {
+            Err(ContextInitError::JwksOverlap {
+                context_with_extra_key: AudienceTag::Admin,
+            }) => {} // expected
+            Err(other) => panic!("expected JwksOverlap(admin), got error: {other}"),
+            Ok(_) => panic!("expected JwksOverlap(admin), got Ok"),
+        }
+    }
+
+    /// T028 happy path: disjoint JWKS → both contexts construct, the
+    /// `Weak` cross-reach is wired in both directions, and each side can
+    /// upgrade its `Weak` back to the other context's `Arc`.
+    #[tokio::test]
+    async fn init_contexts_wires_cross_reach_on_disjoint_jwks() {
+        use crate::config::{ServerConfig, StorageBackend};
+
+        let mut rng = deterministic_rng(29);
+        let vault_key: SigningKey = generate_es256_keypair(&mut rng);
+        let admin_key: SigningKey = generate_es256_keypair(&mut rng);
+        let vault_jwk = es256_public_jwk(vault_key.verifying_key(), Some("vault-k"));
+        let admin_jwk = es256_public_jwk(admin_key.verifying_key(), Some("admin-k"));
+
+        let vault_mock = MockOidcProvider::start(json!({ "keys": [vault_jwk] })).await;
+        let admin_mock = MockOidcProvider::start(json!({ "keys": [admin_jwk] })).await;
+
+        let cfg = ServerConfig {
+            bind_address: "127.0.0.1:0".parse().unwrap(),
+            block_size_bytes: 1024 * 1024,
+            storage_backend: StorageBackend::None,
+            trusted_proxies: vec![],
+            // Direct struct construction bypasses OidcAudienceConfig::new's
+            // HTTPS check — mocks bind HTTP loopback. Production always
+            // routes through the validating constructor.
+            vault_oidc: OidcAudienceConfig {
+                issuer_url: vault_mock.issuer_url(),
+                audience: "vault-aud".to_string(),
+            },
+            admin_oidc: OidcAudienceConfig {
+                issuer_url: admin_mock.issuer_url(),
+                audience: "admin-aud".to_string(),
+            },
+            drain_timeout: std::time::Duration::from_secs(5),
+            auth: AuthConfig::default(),
+        };
+        let http_client = reqwest::Client::new();
+        let (vault_ctx, admin_ctx) = init_contexts(&cfg, &http_client)
+            .await
+            .expect("disjoint init_contexts must succeed");
+
+        // Cross-reach is populated in both directions, and each Weak
+        // upgrades to the other context.
+        let vault_other = vault_ctx
+            .other
+            .get()
+            .expect("vault.other set")
+            .upgrade()
+            .expect("admin Arc still live");
+        assert_eq!(vault_other.tag, AudienceTag::Admin);
+        let admin_other = admin_ctx
+            .other
+            .get()
+            .expect("admin.other set")
+            .upgrade()
+            .expect("vault Arc still live");
+        assert_eq!(admin_other.tag, AudienceTag::Vault);
     }
 
     /// Negative path: when the JWKS endpoint serves a key set that contains
