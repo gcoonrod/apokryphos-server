@@ -79,20 +79,21 @@ pub enum AppError {
 /// Production entry point. Returns `Err` for config-load / bind / serve
 /// failures; the caller (`main`) translates to an `ExitCode`.
 ///
-/// Phase 3 US1 bootstrap order:
+/// Phase 3 US2 bootstrap order:
 ///   1. `config::load()` — Phase 2.
-///   2. `auth::init_single_context(Vault, &cfg.vault_oidc, ...)` — fetch
-///      discovery + JWKS; FR-002 / FR-006 startup failures propagate as
-///      `AppError::Auth` (mapped to non-zero exit by `main`).
+///   2. `auth::init_contexts(&cfg, &http_client)` — fetch discovery +
+///      JWKS for both audiences, run FR-006 startup disjointness check,
+///      wire the Weak cross-reach. FR-002 / FR-006 startup failures
+///      propagate as `AppError::Auth` (mapped to non-zero exit by main).
 ///   3. Construct `Arc<JtiReplayStore>` from the validated `AuthConfig`.
 ///   4. Bind listener (Phase 2).
 ///   5. `emit_server_started` (Phase 2).
-///   6. `routes::build_router(state, Some(vault_ctx), Some(replay_store))`.
+///   6. `routes::build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store))`.
 ///   7. Serve with graceful drain (Phase 2).
 ///
-/// US2 (T035) will replace step 2 with the dual-context `init_contexts`
-/// and spawn the four refresh tasks + replay-store cleanup; US1 leaves
-/// that wiring for the follow-up.
+/// US4 (T048-T051) will spawn the four scheduled refresh tasks
+/// (JWKS×2 + discovery×2) and the replay-store cleanup task between
+/// steps 2 and 4.
 pub async fn run() -> Result<(), AppError> {
     let cfg = config::load()?;
     let bind_addr = cfg.bind_address;
@@ -125,14 +126,9 @@ pub async fn run() -> Result<(), AppError> {
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AppError::Auth(format!("failed to build OIDC HTTP client: {e}")))?;
-    let vault_ctx = crate::auth::init_single_context(
-        crate::auth::AudienceTag::Vault,
-        &cfg.vault_oidc,
-        Arc::clone(&auth_cfg),
-        &http_client,
-    )
-    .await
-    .map_err(|e| AppError::Auth(e.to_string()))?;
+    let (vault_ctx, admin_ctx) = crate::auth::context::init_contexts(&cfg, &http_client)
+        .await
+        .map_err(|e| AppError::Auth(e.to_string()))?;
 
     let replay_store = Arc::new(crate::auth::JtiReplayStore::new(Arc::clone(&auth_cfg)));
 
@@ -155,7 +151,12 @@ pub async fn run() -> Result<(), AppError> {
 
     emit_server_started(local_addr);
 
-    let router = routes::build_router(state, Some(vault_ctx), Some(replay_store));
+    let router = routes::build_router(
+        state,
+        Some(vault_ctx),
+        Some(admin_ctx),
+        Some(replay_store),
+    );
     serve_with_shutdown(
         listener,
         router,

@@ -1,0 +1,40 @@
+error[E0532]: cannot match against a tuple struct which contains private fields
+  --> tests/ui/attempted_from_impl_vault_to_admin.rs:18:13
+   |
+18 |         let VaultSubject(inner) = v;
+   |             ^^^^^^^^^^^^
+   |
+note: constructor is not visible here due to private fields
+  --> tests/ui/attempted_from_impl_vault_to_admin.rs:18:26
+   |
+18 |         let VaultSubject(inner) = v;
+   |                          ^^^^^ private field
+
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+  --> tests/ui/attempted_from_impl_vault_to_admin.rs:15:1
+   |
+15 | impl From<VaultSubject> for AdminSubject {
+   | ^^^^^------------------^^^^^------------
+   |      |                      |
+   |      |                      `AdminSubject` is not defined in the current crate
+   |      `VaultSubject` is not defined in the current crate
+   |
+   = note: impl doesn't have any local type before any uncovered type parameters
+   = note: for more information see https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
+   = note: define and implement a trait or new type instead
+
+error[E0423]: cannot initialize a tuple struct which contains private fields
+  --> tests/ui/attempted_from_impl_vault_to_admin.rs:19:9
+   |
+19 |         AdminSubject(inner)
+   |         ^^^^^^^^^^^^
+   |
+note: constructor is not visible here due to private fields
+  --> src/auth/subject.rs
+   |
+   | pub struct AdminSubject(Sub);
+   |                         ^^^ private field
+help: you might have meant to use the `new` associated function
+   |
+19 |         AdminSubject::new(inner)
+   |                     +++++

@@ -116,16 +116,13 @@ pub(crate) async fn validate_token(
     };
 
     // ── Step 2: FR-011 signature verify against cached JWKS. ────────────
-    // The on-demand JWKS refresh hook (FR-004) is the only validation
-    // step that's stubbed in US1; T031 (US2) wires it through `ctx`'s
-    // `last_on_demand_refresh` rate limit + a single re-verify retry.
-    // Until then a signature failure surfaces directly as InvalidSignature.
-    let jwks = ctx.jwks.load_full();
-    let candidates = jwks.lookup_candidates(header.kid.as_deref());
-    if candidates.is_empty() {
-        return Err(AuthFailure::TokenSignatureInvalid);
-    }
-
+    // Two attempts: the first uses whatever JWKS is currently cached;
+    // on any failure (no matching key OR all candidates failed
+    // verification), we trigger a single-flight on-demand JWKS refresh
+    // (T031, R6, FR-004) and try once more against the post-refresh
+    // JWKS. The on_demand_refresh helper rate-limits via the per-context
+    // AtomicU64 + Notify, so concurrent malformed-token traffic
+    // collapses to one fetch per window (SC-009).
     let mut validation = Validation::new(alg.to_jwt_algorithm());
     // Disable jsonwebtoken's exp/nbf/aud validation entirely; we run our
     // own constant-time iss/aud comparison (Steps 4/5) and a manual
@@ -138,14 +135,10 @@ pub(crate) async fn validate_token(
     //      with a wrong audience presented after expiry. Disabling here
     //      and re-checking later makes the category match the validation
     //      order documented in this module.
-    //   2. With multiple candidate keys, the per-candidate loop below
-    //      could overwrite a terminal claim error (Expired / NotYetValid /
-    //      InvalidIssuer / InvalidAudience) with a later candidate's
-    //      InvalidSignature, producing the wrong log category. We now
-    //      break the loop on the FIRST candidate that decodes
-    //      successfully, then run claim checks once on its decoded
-    //      payload — there's no terminal-error overwrite path because
-    //      claim checks happen outside the retry loop.
+    //   2. With multiple candidate keys, the per-candidate loop in
+    //      `try_decode_with_current_jwks` could overwrite a terminal
+    //      claim error with a later candidate's InvalidSignature. We
+    //      run claim checks outside the loop, so there's no overwrite.
     validation.validate_aud = false;
     validation.validate_exp = false;
     validation.validate_nbf = false;
@@ -153,29 +146,24 @@ pub(crate) async fn validate_token(
     validation.required_spec_claims = std::collections::HashSet::new();
     validation.set_audience::<&str>(&[]);
 
-    let mut last_err = None;
-    let token_data = (|| -> Option<jsonwebtoken::TokenData<TokenClaims>> {
-        for candidate in &candidates {
-            let decoding_key = match DecodingKey::from_jwk(candidate.jwk()) {
-                Ok(k) => k,
-                Err(_) => continue,
-            };
-            match decode::<TokenClaims>(raw_jws, &decoding_key, &validation) {
-                Ok(td) => return Some(td),
-                Err(e) => {
-                    last_err = Some(e);
-                    continue;
-                }
+    let data = match try_decode_with_current_jwks(raw_jws, &header, &validation, ctx) {
+        Ok(td) => td,
+        Err(first_err) => {
+            // FR-004: on-demand refresh, then a single retry. If the
+            // refresh helper reports it didn't complete (timed out or
+            // was rate-limit-skipped without a successful sibling), the
+            // first error is the final answer.
+            if !crate::auth::jwks::on_demand_refresh(ctx).await {
+                return Err(first_err);
             }
-        }
-        None
-    })();
-
-    let data = match token_data {
-        Some(d) => d,
-        None => {
-            // Map jsonwebtoken's terminal error to our auth-failure taxonomy.
-            return Err(map_jwt_error(last_err));
+            match try_decode_with_current_jwks(raw_jws, &header, &validation, ctx) {
+                Ok(td) => td,
+                // Surface the FIRST error on retry-failure: it's the
+                // category the failed validation actually exhibited;
+                // the second attempt's category may be misleading if
+                // the refresh changed the candidate set.
+                Err(_retry_err) => return Err(first_err),
+            }
         }
     };
 
@@ -264,6 +252,37 @@ pub(crate) async fn validate_token(
         nbf: data.claims.nbf,
         cnf_jkt,
     })
+}
+
+/// Try to decode `raw_jws` against `ctx.jwks` (loaded fresh inside this
+/// call so a sibling on-demand refresh between attempts is visible).
+/// Returns the decoded `TokenData` on the first candidate that verifies,
+/// or the mapped failure category if no candidate succeeds. Called twice
+/// from `validate_token`: once before the on-demand refresh and once
+/// after, with the refresh helper rate-limiting the actual JWKS fetch.
+fn try_decode_with_current_jwks(
+    raw_jws: &str,
+    header: &jsonwebtoken::Header,
+    validation: &Validation,
+    ctx: &OidcContext,
+) -> Result<jsonwebtoken::TokenData<TokenClaims>, AuthFailure> {
+    let jwks = ctx.jwks.load_full();
+    let candidates = jwks.lookup_candidates(header.kid.as_deref());
+    if candidates.is_empty() {
+        return Err(AuthFailure::TokenSignatureInvalid);
+    }
+    let mut last_err = None;
+    for candidate in &candidates {
+        let decoding_key = match DecodingKey::from_jwk(candidate.jwk()) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+        match decode::<TokenClaims>(raw_jws, &decoding_key, validation) {
+            Ok(td) => return Ok(td),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(map_jwt_error(last_err))
 }
 
 /// Map jsonwebtoken's `ErrorKind` taxonomy to our auth-failure variants.
