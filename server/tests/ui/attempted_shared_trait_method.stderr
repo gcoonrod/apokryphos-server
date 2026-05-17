@@ -1,0 +1,11 @@
+error[E0616]: field `0` of struct `VaultSubject` is private
+  --> tests/ui/attempted_shared_trait_method.rs:22:14
+   |
+22 |         self.0.as_ref()
+   |              ^ private field
+
+error[E0616]: field `0` of struct `AdminSubject` is private
+  --> tests/ui/attempted_shared_trait_method.rs:28:14
+   |
+28 |         self.0.as_ref()
+   |              ^ private field

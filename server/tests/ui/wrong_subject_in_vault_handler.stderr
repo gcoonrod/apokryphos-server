@@ -1,0 +1,10 @@
+error[E0624]: associated function `new` is private
+  --> tests/ui/wrong_subject_in_vault_handler.rs:20:27
+   |
+20 |     let v = VaultSubject::new(admin.into_string());
+   |                           ^^^ private associated function
+   |
+  ::: src/auth/subject.rs
+   |
+   |     pub(in crate::auth) fn new(sub: impl Into<Box<str>>) -> Self {
+   |     ------------------------------------------------------------ private associated function defined here
