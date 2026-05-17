@@ -373,3 +373,77 @@ async fn negative_missing_ath_rejected() {
         "proof without ath MUST be rejected (no bearer-style DPoP)"
     );
 }
+
+// ───────────── SC-005 supplement: RFC 9449 §4.2 `typ` header ────────────
+//
+// Verifies the Step 1b guard in `validate_proof` (added during the
+// case-insensitive-scheme + typ-header amendment): a JWS whose JOSE
+// `typ` header is missing or not exactly `"dpop+jwt"` MUST be rejected
+// before any signature work — even if every other property would
+// otherwise validate.
+
+#[tokio::test]
+async fn negative_wrong_typ_rejected() {
+    let fx = setup_fixture(12).await;
+    // Build a proof manually with typ="JWT" (the bare-JWT placeholder)
+    // instead of "dpop+jwt". Use the fixture's own key + the correct
+    // ath so the failure can only be the typ check.
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use p256::pkcs8::EncodePrivateKey;
+    let fixture_public_jwk =
+        apokryphos_server::auth::testing::es256_public_jwk(fx.signing_key.verifying_key(), None);
+    let mut header = Header::new(Algorithm::ES256);
+    header.typ = Some("JWT".to_string()); // INTENTIONALLY WRONG
+    header.jwk = Some(serde_json::from_value(fixture_public_jwk).unwrap());
+    let ath = apokryphos_server::auth::testing::compute_ath_for_test(&fx.token);
+    let claims = serde_json::json!({
+        "htm": "GET",
+        "htu": REQUEST_HTU,
+        "iat": now_unix_secs(),
+        "jti": "jti-wrong-typ",
+        "ath": ath,
+    });
+    let pem = fx
+        .signing_key
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap();
+    let key = EncodingKey::from_ec_pem(pem.as_bytes()).unwrap();
+    let proof = encode(&header, &claims, &key).unwrap();
+    assert_eq!(
+        drive(&fx.router, &fx.token, &proof).await,
+        StatusCode::UNAUTHORIZED,
+        "RFC 9449 §4.2: proof with typ != 'dpop+jwt' MUST be rejected at Step 1b"
+    );
+}
+
+#[tokio::test]
+async fn negative_missing_typ_rejected() {
+    let fx = setup_fixture(13).await;
+    // typ omitted entirely. Same construction as above but header.typ = None.
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use p256::pkcs8::EncodePrivateKey;
+    let fixture_public_jwk =
+        apokryphos_server::auth::testing::es256_public_jwk(fx.signing_key.verifying_key(), None);
+    let mut header = Header::new(Algorithm::ES256);
+    header.typ = None;
+    header.jwk = Some(serde_json::from_value(fixture_public_jwk).unwrap());
+    let ath = apokryphos_server::auth::testing::compute_ath_for_test(&fx.token);
+    let claims = serde_json::json!({
+        "htm": "GET",
+        "htu": REQUEST_HTU,
+        "iat": now_unix_secs(),
+        "jti": "jti-missing-typ",
+        "ath": ath,
+    });
+    let pem = fx
+        .signing_key
+        .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap();
+    let key = EncodingKey::from_ec_pem(pem.as_bytes()).unwrap();
+    let proof = encode(&header, &claims, &key).unwrap();
+    assert_eq!(
+        drive(&fx.router, &fx.token, &proof).await,
+        StatusCode::UNAUTHORIZED,
+        "RFC 9449 §4.2: proof without typ MUST be rejected"
+    );
+}

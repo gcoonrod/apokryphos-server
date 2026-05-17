@@ -127,21 +127,31 @@ pub(crate) async fn validate_token(
     }
 
     let mut validation = Validation::new(alg.to_jwt_algorithm());
-    // jsonwebtoken validates exp + nbf with the supplied leeway. We
-    // explicitly disable its iss/aud comparison and re-do it under
-    // `ct_eq_str` per FR-016 — see Step 4/5.
+    // Disable jsonwebtoken's exp/nbf/aud validation entirely; we run our
+    // own constant-time iss/aud comparison (Steps 4/5) and a manual
+    // exp/nbf check (Step 5a) AFTER iss/aud per the documented ordering
+    // at the top of this file. This fixes two PR-review-cycle findings:
+    //   1. With validate_exp = true, jsonwebtoken rejected expired
+    //      tokens during decode — BEFORE the constant-time iss/aud
+    //      check ran. The wire-level outcome was the uniform 401, but
+    //      the log category was "auth.token.expired" even for a token
+    //      with a wrong audience presented after expiry. Disabling here
+    //      and re-checking later makes the category match the validation
+    //      order documented in this module.
+    //   2. With multiple candidate keys, the per-candidate loop below
+    //      could overwrite a terminal claim error (Expired / NotYetValid /
+    //      InvalidIssuer / InvalidAudience) with a later candidate's
+    //      InvalidSignature, producing the wrong log category. We now
+    //      break the loop on the FIRST candidate that decodes
+    //      successfully, then run claim checks once on its decoded
+    //      payload — there's no terminal-error overwrite path because
+    //      claim checks happen outside the retry loop.
     validation.validate_aud = false;
-    validation.validate_exp = true;
-    validation.validate_nbf = true;
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
     validation.leeway = ctx.auth_config.clock_skew_secs;
-    // We require `cnf` to be present per FR-015; jsonwebtoken's
-    // `required_spec_claims` doesn't know `cnf`, so we enforce that in
-    // Step 6 below. Leave `required_spec_claims` at the default
-    // ({"exp"}) — `sub`, `iss`, `iat` are checked manually because
-    // jsonwebtoken's "required" set treats missing claims as a generic
-    // error rather than a category-specific one.
     validation.required_spec_claims = std::collections::HashSet::new();
-    validation.set_audience::<&str>(&[]); // silence audience requirement
+    validation.set_audience::<&str>(&[]);
 
     let mut last_err = None;
     let token_data = (|| -> Option<jsonwebtoken::TokenData<TokenClaims>> {
@@ -211,6 +221,27 @@ pub(crate) async fn validate_token(
     // ── Step 5: FR-013 audience match (constant-time). ─────────────────
     if !ct_eq_str(&aud, ctx.audience.as_str()) {
         return Err(AuthFailure::TokenAudienceMismatch);
+    }
+
+    // ── Step 5a: FR-014 exp/nbf check (after iss/aud per the
+    // documented ordering — see the validation-pipeline comment at the
+    // top of this file). Disabled in `Validation` above so it runs
+    // here, after the constant-time iss/aud comparisons rather than
+    // inside jsonwebtoken's decode (which would have run BEFORE the
+    // ct_eq_str checks and produced TokenExpired log categories for
+    // tokens that also had iss/aud problems).
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let skew = ctx.auth_config.clock_skew_secs;
+    if exp.saturating_add(skew) <= now_secs {
+        return Err(AuthFailure::TokenExpired);
+    }
+    if let Some(nbf) = data.claims.nbf {
+        if nbf > now_secs.saturating_add(skew) {
+            return Err(AuthFailure::TokenNotYetValid);
+        }
     }
 
     // ── Parse cnf.jkt to raw 32 bytes for FR-022 (DPoP-side). ──────────

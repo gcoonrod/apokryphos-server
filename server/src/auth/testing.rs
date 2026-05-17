@@ -1,11 +1,14 @@
 //! Test helpers for Phase 3: ephemeral keypair generation, token/proof
 //! minting, and the in-process `MockOidcProvider`.
 //!
-//! This module is gated by `#[cfg(any(test, feature = "test-utils"))]` so
-//! it does NOT compile into the release binary (R1, R15). Production never
-//! generates cryptographic keys; only tests do.
+//! This module is gated by `#[cfg(feature = "test-utils")]` (feature only
+//! — NOT `cfg(test)`) so it does NOT compile into the release binary and
+//! does NOT compile into the lib under plain `cargo test`. The optional
+//! crypto dependencies (rsa, p256, rand, rand_chacha) are activated only
+//! when the feature is on, and the gate matches that activation. See the
+//! `[features]` block in `Cargo.toml`.
 //!
-//! ## Current scope (Phase 2 foundational + Phase 3 US1 first step)
+//! ## Current scope (Phase 3 US1 + post-PR-review enforcement)
 //!
 //! - `deterministic_rng` — reproducible-seed `ChaCha8Rng` factory.
 //! - `generate_ps256_keypair` — RSA-2048 private key for PS256.
@@ -14,12 +17,16 @@
 //!   serving `/.well-known/openid-configuration` + `/jwks.json` with
 //!   observable per-endpoint request counters. Used by `init_single_context`
 //!   integration tests + the upcoming SC-007/008/009 tests.
+//! - `mint_es256_token(claims, key, kid, omit_cnf_jkt) -> String` and
+//!   `mint_es256_dpop_proof(key, htm, htu, iat, jti, ath_for) -> String`
+//!   — JWS minters used by all Phase 3 negative/positive matrix tests.
+//!   The `ath_for: Option<&str>` parameter supports both the FR-022a
+//!   positive control (Some) and the missing-`ath` negative test (None).
+//! - `compute_ath_for_test(raw_token) -> String` — RFC 9449 §4.2 helper
+//!   for tests that need to construct an `ath`-mismatch fixture.
 //!
-//! ## Phase 3 scope (TODO — lands in T019/T020/T025/T026)
-//!
-//! - `mint_vault_token(claims, key, alg) -> String` and
-//!   `mint_admin_token(...)` helpers using `jsonwebtoken::encode`.
-//! - `mint_dpop_proof(htm, htu, iat, jti, key, alg) -> String` helper.
+//! Phase 3 US2 will add `mint_admin_token` + PS256-signed mint paths
+//! alongside the dual-context tests (T028+).
 
 use rand_chacha::ChaCha8Rng;
 use rand_chacha::rand_core::SeedableRng;

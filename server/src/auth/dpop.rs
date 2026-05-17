@@ -32,6 +32,10 @@
 //!      `MemoryPressure` → 503.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+// SystemTime is still used for the iat-freshness check (Step 5); the
+// audit-time deadline that previously used SystemTime + Duration was
+// removed to avoid panics on adversarial config — see the replay-insert
+// site below.
 
 use axum::http::Method;
 use base64::Engine;
@@ -223,11 +227,18 @@ pub(crate) async fn validate_proof(
         .jti
         .ok_or(AuthFailure::ProofMissingClaim("jti"))?;
     let jti_key = JtiKey::new(ctx.tag.as_jti_key_byte(), &jti);
-    let deadline = SystemTime::now()
-        + Duration::from_secs(ctx.auth_config.jti_replay_window_secs);
+    // Use checked_add so an adversarial-but-validator-accepting
+    // `jti_replay_window_secs` (config validation only enforces
+    // `>= dpop_freshness_secs + clock_skew_secs`, not an upper bound)
+    // cannot panic the request task. On overflow we treat the configured
+    // window as "infinite" by falling back to the lowest-deadline behavior
+    // (`now`), which makes the new entry effectively expire-on-next-tick.
+    // The validator's lower-bound invariant already guarantees the window
+    // is at least 90 s under normal configurations.
+    let window = Duration::from_secs(ctx.auth_config.jti_replay_window_secs);
     let deadline_instant = std::time::Instant::now()
-        + Duration::from_secs(ctx.auth_config.jti_replay_window_secs);
-    let _ = deadline; // SystemTime kept for future logging/audit
+        .checked_add(window)
+        .ok_or(AuthFailure::ProofIatStale)?;
     match replay_store.try_insert(jti_key, deadline_instant) {
         Ok(()) => {}
         Err(ReplayInsertError::Replayed) => return Err(AuthFailure::ProofReplayed),
@@ -275,7 +286,18 @@ fn urls_equivalent_ct(a: &Url, b: &Url) -> bool {
         (None, None) => true,
         _ => false,
     };
-    scheme_eq && host_eq && port_eq && path_eq && query_eq
+    // Reject any URI carrying a userinfo component. RFC 3986 §3.2.1
+    // makes userinfo part of the authority, and an attacker who controls
+    // the `htu` claim could include arbitrary userinfo
+    // (`http://user@host/api/whoami`) that the request URI typically
+    // lacks. Rather than try to compare a component that should never
+    // be present on either side, reject the proof outright if either
+    // URL has userinfo. `Url::username()` returns an empty string when
+    // none is set; `Url::password()` returns None.
+    let no_userinfo =
+        a.username().is_empty() && a.password().is_none()
+            && b.username().is_empty() && b.password().is_none();
+    scheme_eq && host_eq && port_eq && path_eq && query_eq && no_userinfo
 }
 
 fn compute_jwk_thumbprint(jwk: &jsonwebtoken::jwk::Jwk) -> Result<[u8; 32], AuthFailure> {

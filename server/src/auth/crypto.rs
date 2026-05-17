@@ -3,8 +3,15 @@
 //! Every byte/string equality comparison performed on auth-critical paths
 //! (FR-016, FR-023) MUST route through `ct_eq_bytes` / `ct_eq_str` /
 //! `ct_eq_32`. These wrappers delegate to `subtle::ConstantTimeEq` which is
-//! constant-time-audited. No early-return is permitted in any of these
-//! functions.
+//! constant-time-audited.
+//!
+//! Note on the one allowed early return: `ct_eq_bytes` short-circuits when
+//! the two inputs have different lengths. FAPI 2.0 + DPoP does NOT require
+//! length-blinding (the lengths of audience strings, htu paths, etc. are
+//! either operator-configured or wire-public anyway). The "no early return"
+//! property holds for the *value-dependent* comparison: once two equal-
+//! length slices reach `subtle::ConstantTimeEq`, no byte-position-dependent
+//! branch can fire.
 //!
 //! `jwk_thumbprint` computes the RFC 7638 §3.1 + §3.2 canonical-JSON SHA-256
 //! digest of a JWK's public-key parameters. The canonical form is ASCII-only

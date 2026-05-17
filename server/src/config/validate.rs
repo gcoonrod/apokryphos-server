@@ -141,7 +141,17 @@ fn parse_max_replay_entries(value: Option<toml::Value>) -> Result<Option<usize>,
             });
         }
     };
-    Ok(Some(parsed as usize))
+    // `parsed as usize` silently truncates on 32-bit Unix targets — a
+    // value like 4_294_967_296 passes the u64 >= 1024 check but maps to
+    // 0 as usize, causing the replay store to reject every insert as
+    // memory pressure. Use a checked conversion so misconfiguration
+    // becomes a typed ConfigError instead.
+    let as_usize = usize::try_from(parsed).map_err(|_| {
+        ConfigError::InvalidAuthMaxReplayEntries {
+            value: parsed.to_string(),
+        }
+    })?;
+    Ok(Some(as_usize))
 }
 
 fn parse_bind_address(value: Option<String>) -> Result<SocketAddr, ConfigError> {

@@ -230,6 +230,60 @@ async fn whoami_vault_no_dpop_returns_uniform_401() {
 
 // ────────────────── Negative: replayed DPoP jti ──────────────────────────
 
+// ──────── FR-030: method-mismatch returns 404 (no route-existence leak) ────────
+
+/// POST /api/whoami MUST return 404, not 405 (Allow: GET) and not 401.
+/// The `method_not_allowed_fallback` runs OUTSIDE the vault guard, so
+/// the auth pipeline is never invoked for non-GET methods. Mirror test
+/// for HEAD ensures axum's auto-HEAD-handling is correctly disabled via
+/// `on(MethodFilter::GET, ...)` (which matches GET only).
+#[tokio::test]
+async fn whoami_vault_post_returns_404_not_405_or_401() {
+    let fixture = setup_fixture().await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/whoami")
+        .header(header::HOST, HeaderValue::from_static("127.0.0.1"))
+        .body(Body::empty())
+        .unwrap();
+    let response = fixture.router.clone().oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "FR-030: POST /api/whoami MUST return 404 (not 405, not 401)"
+    );
+    assert!(
+        response.headers().get(header::ALLOW).is_none(),
+        "no Allow header — that would leak the route exists"
+    );
+    assert!(
+        response.headers().get(header::WWW_AUTHENTICATE).is_none(),
+        "no WWW-Authenticate — that would leak that the route is authenticated"
+    );
+}
+
+#[tokio::test]
+async fn whoami_vault_head_returns_404_not_via_auto_get() {
+    let fixture = setup_fixture().await;
+    let request = Request::builder()
+        .method(Method::HEAD)
+        .uri("/api/whoami")
+        .header(header::HOST, HeaderValue::from_static("127.0.0.1"))
+        .body(Body::empty())
+        .unwrap();
+    let response = fixture.router.clone().oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "FR-030: HEAD /api/whoami MUST return 404 — axum's auto-HEAD \
+         handling is disabled via on(MethodFilter::GET, _) which matches \
+         GET only, so HEAD falls through to method_not_allowed_fallback"
+    );
+    assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
+}
+
+// ─────────────────────── Replay rejection ─────────────────────────────────
+
 #[tokio::test]
 async fn whoami_vault_replayed_dpop_jti_returns_401() {
     let fixture = setup_fixture().await;

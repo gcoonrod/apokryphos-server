@@ -62,10 +62,16 @@ pub enum AppError {
 
     /// Phase 3 auth subsystem startup failure: discovery or JWKS fetch
     /// failed, JWKS was empty, or the two contexts' JWKS overlapped at
-    /// startup (FR-002, FR-006). Carries a typed `auth::context::ContextInitError`
-    /// once that type lands in Phase 3 US1 (T018). Declared here as
-    /// `String` in Phase 2 so the variant exists for the FR-002/FR-006
-    /// exit-non-zero path; T028 will retype it to the typed error.
+    /// startup (FR-002, FR-006). `auth::context::ContextInitError` has
+    /// landed in this PR (T018) and is what `run()` produces, but the
+    /// variant payload is `String` here so the call site `format!`s the
+    /// typed error's `Display`-impl message instead of moving the error
+    /// itself. T028 (US2, dual-context `init_contexts`) will switch to
+    /// `ContextInitError` directly so the structured fields (e.g.,
+    /// `JwksOverlap.context_with_extra_key`) can be inspected by callers
+    /// — the `String` form is an interim type-erasure that loses field
+    /// access in exchange for not requiring `ContextInitError` to be
+    /// reachable from `app.rs` until the dual-context constructor lands.
     #[error("auth subsystem initialization failed: {0}")]
     Auth(String),
 }
@@ -104,8 +110,19 @@ pub async fn run() -> Result<(), AppError> {
     // matters; for now 30s is a defensive default that catches
     // pathological providers without breaking sane ones.
     let auth_cfg = Arc::new(cfg.auth.clone());
+    // Build the OIDC HTTP client with two production defences:
+    //   1. `timeout(30s)` — a stalling issuer cannot hang `run()` before
+    //      bind + emit_server_started (PR #4 review-cycle Round 1).
+    //   2. `redirect(Policy::none())` — reqwest's default policy is
+    //      `Policy::limited(10)`, which silently follows 3xx redirects.
+    //      An HTTPS discovery or `jwks_uri` could redirect to `http://`
+    //      and bypass the scheme check that runs against the *original*
+    //      URL. Disabling redirects entirely is the simplest defence:
+    //      a legitimate OIDC provider should not be issuing redirects
+    //      from these endpoints in the first place.
     let http_client = openidconnect::reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AppError::Auth(format!("failed to build OIDC HTTP client: {e}")))?;
     let vault_ctx = crate::auth::init_single_context(

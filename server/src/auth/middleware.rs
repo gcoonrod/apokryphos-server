@@ -97,6 +97,20 @@ where
         // a Service-contract violation for any non-always-ready inner.
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
+
+        // FR-030 leak prevention: for non-GET methods, the guard MUST
+        // pass through to the inner service WITHOUT running the auth
+        // pipeline. The inner handler (registered with `any(...)`) will
+        // dispatch on method and return a 404 for non-GET — which is
+        // indistinguishable from a path-mismatch 404. If we ran the
+        // auth pipeline for non-GET, an unauthenticated POST/HEAD
+        // would receive a 401 with `WWW-Authenticate: DPoP ...` and
+        // reveal the route's existence. The auth pipeline is meaningful
+        // only on the verb the route actually services.
+        if request.method() != axum::http::Method::GET {
+            return Box::pin(async move { inner.call(request).await });
+        }
+
         Box::pin(async move {
             // Capture the effective client address up front; we need it
             // both for the success path (request extensions remain intact)

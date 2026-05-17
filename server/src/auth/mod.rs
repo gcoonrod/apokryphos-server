@@ -29,7 +29,7 @@ pub mod failure;
 pub mod jwks;
 pub mod middleware;
 pub mod replay;
-mod subject;
+pub(crate) mod subject;
 mod token;
 
 // `auth::testing` is gated on the `test-utils` feature ONLY (not on

@@ -96,16 +96,21 @@ impl AdminSubject {
     }
 }
 
-/// Request-extension carrier for `VaultSubject`. The field is `pub` so
-/// `auth::middleware::vault_guard` can read it back when extracting from
-/// request extensions; the struct itself is `pub(in crate::auth)` so
-/// external code can neither construct nor inspect the extension.
+/// Request-extension carrier for `VaultSubject`. Visibility is
+/// `pub(crate)` so the routes layer can read the extension after the
+/// guard inserts it (specifically: the `any(handler)`-style dispatcher
+/// in `routes/api/whoami.rs` needs to read this on GET requests). The
+/// inner field stays `pub VaultSubject` rather than exposing `Sub`
+/// directly — and `VaultSubject`'s own constructor is still
+/// `pub(in crate::auth)`, so external code STILL cannot construct an
+/// extension. The widened visibility is a one-way valve: read-only
+/// access for the dispatcher.
 #[derive(Clone, Debug)]
-pub(in crate::auth) struct VaultSubjectExtension(pub VaultSubject);
+pub(crate) struct VaultSubjectExtension(pub VaultSubject);
 
 /// Mirror for `AdminSubject`.
 #[derive(Clone, Debug)]
-pub(in crate::auth) struct AdminSubjectExtension(pub AdminSubject);
+pub(crate) struct AdminSubjectExtension(pub AdminSubject);
 
 impl<S> FromRequestParts<S> for VaultSubject
 where

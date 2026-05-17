@@ -1,9 +1,16 @@
-//! HTTP router assembly (FR-019..022, Clarify-Q1, invariants R1..R7).
+//! HTTP router assembly (FR-019..022, FR-030, Clarify-Q1, invariants R1..R7).
 //!
-//! Exactly one route is *registered*: `/health`. The handler dispatches on
-//! method internally — `GET` returns the JSON body, every other method
-//! falls through to a 404 that is byte-identical to the path-mismatch
-//! fallback (Clarify-Q1).
+//! Two routes are registered in the production router:
+//!   * `/health` — unauthenticated; the handler dispatches on method
+//!     internally (`GET` returns the JSON body, every other method falls
+//!     through to a 404 byte-identical to the path-mismatch fallback,
+//!     Clarify-Q1).
+//!   * `/api/whoami` — vault-guarded GET (Phase 3 FR-027). Mounted only
+//!     when the caller supplies the optional `vault_ctx` + `replay_store`
+//!     parameters. Lives in the `api` submodule so its 405→404 conversion
+//!     (FR-030) is colocated with the handler; the guard is layered on
+//!     the GET method specifically so non-GET requests never invoke the
+//!     auth pipeline.
 //!
 //! ## Why `any(...)` instead of `get(...)` for `/health` (R13 amendment)
 //!

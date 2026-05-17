@@ -108,7 +108,13 @@ pub async fn fetch_discovery(
             source,
         })?;
 
-    #[cfg(not(any(test, feature = "test-utils")))]
+    // FAPI 2.0 mandates TLS-everywhere. The HTTPS check is relaxed only
+    // when test-utils is enabled AND we're in a debug build — so a
+    // release binary built with `--features test-utils` (e.g., `cargo
+    // build --release --all-features`) still enforces HTTPS. The
+    // in-process MockOidcProvider runs in cfg(test) + cfg(debug_assertions)
+    // contexts, so the test path remains usable.
+    #[cfg(not(all(any(test, feature = "test-utils"), debug_assertions)))]
     if jwks_uri.scheme() != "https" {
         return Err(DiscoveryFetchError::JwksUriScheme {
             scheme: jwks_uri.scheme().to_string(),

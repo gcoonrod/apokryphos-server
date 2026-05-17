@@ -433,10 +433,20 @@ fn auth_env_overrides_toml() {
     "#;
     let mut env = BTreeMap::new();
     env.insert("APOK_AUTH_CLOCK_SKEW_SECS".into(), "7".into());
-    // Replay window must satisfy `>= dpop_freshness_secs + clock_skew_secs`;
-    // defaults give freshness = 30 and our override sets skew = 7, so the
-    // default replay window of 90 (= 30 + 60) is still ≥ 37 and accepted.
+    // Replay window must satisfy `>= dpop_freshness_secs + clock_skew_secs`.
+    // Defaults give freshness = 30; our env override sets skew = 7. Because
+    // jti_replay_window_secs is omitted from both TOML and env, `parse_auth`
+    // resolves it to `freshness + skew = 37` (NOT the AuthConfig::default()
+    // value of 90), and the cross-field invariant trivially holds at 37 >= 37.
     let cfg = load_from(env, Some(toml))
         .expect("env should override TOML for auth keys");
     assert_eq!(cfg.auth.clock_skew_secs, 7, "env wins over TOML");
+    // Assert the resolved replay window matches the freshness+skew rule,
+    // not the AuthConfig::default() value — this is what the spec
+    // §Assumptions says ("`jti` replay window (default 90 s = freshness +
+    // skew)") and what parse_auth actually computes.
+    assert_eq!(
+        cfg.auth.jti_replay_window_secs, 37,
+        "resolved replay window = dpop_freshness_secs (30) + clock_skew_secs (7)"
+    );
 }
