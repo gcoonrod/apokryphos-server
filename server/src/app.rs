@@ -148,22 +148,51 @@ pub async fn run() -> Result<(), AppError> {
     // arriving immediately after bind cannot fall through to the default
     // termination disposition while axum is still setting up its serve loop.
     let signals = shutdown::install_signals().map_err(AppError::SignalSetup)?;
+    let (shutdown_fut, shutdown_rx) = shutdown::shutdown_coordinator(signals, drain_timeout);
+
+    // T048: spawn the four scheduled refresh tasks + replay-store
+    // cleanup before announcing readiness. Each clones the watch
+    // receiver and breaks out of its loop when the watch flips to
+    // `true` (the shutdown_fut above sends it). The task handles are
+    // detached — we rely on the watch + the drain-timeout backstop
+    // for graceful termination; aborting on serve-exit is unnecessary
+    // because the watch already prompts a clean break, and a task
+    // that misses the watch wakeup is still cancelled when the runtime
+    // shuts down.
+    let _vault_jwks_task =
+        tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
+            Arc::clone(&vault_ctx),
+            shutdown_rx.clone(),
+        ));
+    let _admin_jwks_task =
+        tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
+            Arc::clone(&admin_ctx),
+            shutdown_rx.clone(),
+        ));
+    let _vault_discovery_task =
+        tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
+            Arc::clone(&vault_ctx),
+            shutdown_rx.clone(),
+        ));
+    let _admin_discovery_task =
+        tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
+            Arc::clone(&admin_ctx),
+            shutdown_rx.clone(),
+        ));
+    let _replay_cleanup_task = tokio::spawn(crate::auth::replay::cleanup_task(
+        Arc::clone(&replay_store),
+        shutdown_rx,
+    ));
 
     emit_server_started(local_addr);
 
     let router = routes::build_router(
         state,
-        Some(vault_ctx),
-        Some(admin_ctx),
-        Some(replay_store),
+        Some(Arc::clone(&vault_ctx)),
+        Some(Arc::clone(&admin_ctx)),
+        Some(Arc::clone(&replay_store)),
     );
-    serve_with_shutdown(
-        listener,
-        router,
-        shutdown::wait_for_signal(signals, drain_timeout),
-        drain_timeout,
-    )
-    .await
+    serve_with_shutdown(listener, router, shutdown_fut, drain_timeout).await
 }
 
 /// Drive `axum::serve` with a caller-supplied shutdown future and a wall-clock

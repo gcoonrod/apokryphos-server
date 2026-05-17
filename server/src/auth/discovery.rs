@@ -124,6 +124,56 @@ pub async fn fetch_discovery(
     Ok(Discovery { jwks_uri })
 }
 
+/// T050: scheduled discovery refresh task. Spawned per `OidcContext`
+/// by `app::run` (T048). On each tick, re-fetches the discovery
+/// document and atomically swaps it via `ctx.discovery.store(...)`.
+/// No overlap check is needed — the discovery doc carries only the
+/// `jwks_uri`, not key material. Per FR-003a, a fetch failure does
+/// NOT evict the cached document; the previous one keeps serving.
+///
+/// Like `jwks::scheduled_refresh_task`, the first immediate tick from
+/// `tokio::time::interval` is consumed before the loop — the startup
+/// fetch already populated `ctx.discovery`.
+pub async fn scheduled_refresh_task(
+    ctx: std::sync::Arc<crate::auth::context::OidcContext>,
+    mut shutdown: crate::shutdown::ShutdownRx,
+) {
+    // Defensive early-exit (same rationale as jwks::scheduled_refresh_task):
+    // a receiver cloned after the watch has flipped would otherwise
+    // never observe `changed()`.
+    if *shutdown.borrow() {
+        return;
+    }
+
+    let dur = std::time::Duration::from_secs(ctx.auth_config.discovery_refresh_secs);
+    let mut tick = tokio::time::interval(dur);
+    tick.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                match fetch_discovery(&ctx.http_client, &ctx.issuer_url).await {
+                    Ok(new_discovery) => {
+                        ctx.discovery.store(std::sync::Arc::new(new_discovery));
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            event = "discovery.scheduled_refresh_failed",
+                            audience = ctx.tag.name(),
+                            "scheduled discovery refresh failed; cached document retained"
+                        );
+                    }
+                }
+            }
+            res = shutdown.changed() => {
+                if res.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
