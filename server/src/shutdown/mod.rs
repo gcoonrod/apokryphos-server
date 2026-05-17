@@ -72,3 +72,40 @@ pub async fn signal_listener_from_channel(rx: oneshot::Receiver<()>, drain_timeo
     let _ = rx.await;
     emit_server_shutdown_initiated("test_trigger", drain_timeout);
 }
+
+/// Background-task shutdown subscription. Tasks spawned by `app::run`
+/// (US4's four refresh tasks + replay-store cleanup) clone the receiver
+/// produced by `shutdown_coordinator` and await `changed()` in a
+/// `tokio::select!` arm so they wake immediately when the main wait-for-
+/// signal future flips the watch to `true`. The receiver is a watch
+/// channel — late subscribers see the current value with `borrow()`,
+/// and `changed()` returns `Err` once the sender drops, which is how
+/// tasks notice the parent has exited even if the watch was never
+/// flipped (defensive — shouldn't happen in practice).
+#[allow(dead_code)]
+pub type ShutdownRx = tokio::sync::watch::Receiver<bool>;
+
+/// Build a one-shot shutdown broadcaster from the installed signals.
+/// Returns:
+///   - A `Future<Output = ()>` to be passed as the axum graceful-shutdown
+///     handler. When polled it awaits whichever signal arrives first,
+///     emits `server.shutdown.initiated`, AND flips the watch channel
+///     so every background task wakes from its select.
+///   - A `ShutdownRx` to clone into every spawned background task.
+///
+/// The watch's initial value is `false`; the future flips it to `true`
+/// exactly once. Tasks await `rx.changed()` inside `tokio::select!`.
+#[allow(dead_code)]
+pub fn shutdown_coordinator(
+    signals: InstalledSignals,
+    drain_timeout: Duration,
+) -> (impl std::future::Future<Output = ()> + Send + 'static, ShutdownRx) {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let fut = async move {
+        wait_for_signal(signals, drain_timeout).await;
+        // `send` only errors if every receiver has been dropped — at
+        // that point there's no one to notify, which is benign.
+        let _ = tx.send(true);
+    };
+    (fut, rx)
+}

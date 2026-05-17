@@ -194,6 +194,44 @@ impl JtiReplayStore {
     }
 }
 
+/// T051: replay-store cleanup task. Spawned once by `app::run` (T048).
+/// Drives a `tokio::time::interval` at `jti_replay_window_secs / 4`
+/// (so an expired entry is removed within at most a quarter-window of
+/// its deadline). Each tick calls `maintenance_tick(Instant::now())`,
+/// which pops every expired entry off the heap and removes it from
+/// the primary map. The task exits when the shared shutdown watch
+/// flips to `true`.
+///
+/// `tokio::time::interval`'s immediate first tick is consumed before
+/// the loop, matching the symmetric pattern in
+/// `jwks::scheduled_refresh_task` — there's no useful work to do at
+/// t=0 (the store has just been created and is empty).
+pub(crate) async fn cleanup_task(
+    store: std::sync::Arc<JtiReplayStore>,
+    mut shutdown: crate::shutdown::ShutdownRx,
+) {
+    let window_secs = store.config.jti_replay_window_secs;
+    // Cleanup quarter-window keeps lag bounded: any expired entry is
+    // gone within `window/4` seconds of its deadline. Floor at 1s so a
+    // pathologically tiny configured window doesn't busy-loop.
+    let dur = std::time::Duration::from_secs((window_secs / 4).max(1));
+    let mut tick = tokio::time::interval(dur);
+    tick.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                store.maintenance_tick(Instant::now());
+            }
+            res = shutdown.changed() => {
+                if res.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

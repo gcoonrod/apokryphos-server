@@ -172,6 +172,63 @@ pub async fn fetch_jwks(
     parse_jwks(raw)
 }
 
+/// T049: scheduled JWKS refresh task. Spawned once per `OidcContext`
+/// by `app::run` (T048). Sleeps for `jwks_refresh_secs`, then attempts
+/// a fetch + install loop. The task ends when the shared shutdown
+/// watch flips to `true` (or its sender drops). All errors stay inside
+/// the task — a refresh failure leaves the cached JWKS in place per
+/// FR-003a (no eviction-on-failure).
+///
+/// `tokio::time::interval` fires immediately on its first tick; we
+/// consume that immediate tick before entering the select-loop so the
+/// FIRST refresh happens after `jwks_refresh_secs`, not on entry —
+/// the initial JWKS was fetched at startup by `init_contexts`.
+pub(crate) async fn scheduled_refresh_task(
+    ctx: std::sync::Arc<crate::auth::context::OidcContext>,
+    mut shutdown: crate::shutdown::ShutdownRx,
+) {
+    let dur = std::time::Duration::from_secs(ctx.auth_config.jwks_refresh_secs);
+    let mut tick = tokio::time::interval(dur);
+    // Consume the immediate first tick — `interval(d)` fires at t=0,
+    // and we've already fetched the JWKS during init.
+    tick.tick().await;
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                do_scheduled_refresh(&ctx).await;
+            }
+            // changed() returns Err only if the sender drops. We treat
+            // that as a shutdown signal too — there's nobody left to
+            // notify us, and continuing to spin would be pointless.
+            res = shutdown.changed() => {
+                if res.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn do_scheduled_refresh(ctx: &crate::auth::context::OidcContext) {
+    let jwks_uri = ctx.discovery.load().jwks_uri.clone();
+    match fetch_jwks(&ctx.http_client, &jwks_uri).await {
+        Ok(new_jwks) => {
+            // install_refreshed_jwks runs the FR-007 disjointness check
+            // against the OTHER context's current JWKS. A returned Err
+            // logs internally; we don't double-log here.
+            let _ = crate::auth::context::install_refreshed_jwks(ctx, new_jwks);
+        }
+        Err(_) => {
+            tracing::warn!(
+                event = "jwks.scheduled_refresh_failed",
+                audience = ctx.tag.name(),
+                "scheduled JWKS refresh failed (network or parse error); cached JWKS retained"
+            );
+        }
+    }
+}
+
 /// T031: single-flight, rate-limited on-demand JWKS refresh (R6, FR-004).
 ///
 /// Called from `token::validate_token` when signature verification has
