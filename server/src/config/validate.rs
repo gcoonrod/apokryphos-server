@@ -5,11 +5,12 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use super::env::{PartialConfig, PartialOidc, TrustedProxiesSource};
+use super::env::{PartialAuth, PartialConfig, PartialOidc, TrustedProxiesSource};
 use super::error::ConfigError;
-use super::server_config::{OidcAudienceConfig, ServerConfig, StorageBackend};
+use super::server_config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
+const MIN_REPLAY_ENTRIES: usize = 1024;
 
 pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
     let bind_address = parse_bind_address(p.bind_address)?;
@@ -33,6 +34,8 @@ pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
         });
     }
 
+    let auth = parse_auth(p.auth)?;
+
     Ok(ServerConfig {
         bind_address,
         block_size_bytes,
@@ -41,7 +44,114 @@ pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
         vault_oidc,
         admin_oidc,
         drain_timeout,
+        auth,
     })
+}
+
+/// Resolve the `[auth]` block to a fully-validated `AuthConfig`. The block
+/// is optional; absent → `AuthConfig::default()`. Each field is also
+/// individually optional within the block. Per-field validation runs
+/// before the cross-field invariant.
+fn parse_auth(partial: Option<PartialAuth>) -> Result<AuthConfig, ConfigError> {
+    let defaults = AuthConfig::default();
+    let Some(p) = partial else { return Ok(defaults) };
+
+    let clock_skew_secs = parse_auth_positive_u64("clock_skew_secs", p.clock_skew_secs)?
+        .unwrap_or(defaults.clock_skew_secs);
+    let dpop_freshness_secs =
+        parse_auth_positive_u64("dpop_freshness_secs", p.dpop_freshness_secs)?
+            .unwrap_or(defaults.dpop_freshness_secs);
+    let jwks_refresh_secs = parse_auth_positive_u64("jwks_refresh_secs", p.jwks_refresh_secs)?
+        .unwrap_or(defaults.jwks_refresh_secs);
+    let discovery_refresh_secs =
+        parse_auth_positive_u64("discovery_refresh_secs", p.discovery_refresh_secs)?
+            .unwrap_or(defaults.discovery_refresh_secs);
+    let on_demand_refresh_min_interval_secs = parse_auth_positive_u64(
+        "on_demand_refresh_min_interval_secs",
+        p.on_demand_refresh_min_interval_secs,
+    )?
+    .unwrap_or(defaults.on_demand_refresh_min_interval_secs);
+    // Cross-field invariant: replay window must cover freshness + skew.
+    // Use `checked_add` to surface adversarial env values
+    // (e.g. APOK_AUTH_DPOP_FRESHNESS_SECS=18446744073709551615) as a
+    // typed ConfigError rather than panicking (debug) or wrapping
+    // (release). The same sum is the default for `jti_replay_window_secs`
+    // when the operator omits that key, so we compute it once and reuse.
+    let required = dpop_freshness_secs.checked_add(clock_skew_secs).ok_or(
+        ConfigError::AuthReplayWindowTooSmall {
+            window: 0,
+            freshness: dpop_freshness_secs,
+            skew: clock_skew_secs,
+            required: u64::MAX, // signals "overflow"; Display impl shows the offending sum
+        },
+    )?;
+    let jti_replay_window_secs =
+        parse_auth_positive_u64("jti_replay_window_secs", p.jti_replay_window_secs)?
+            .unwrap_or(required);
+    let max_replay_entries = parse_max_replay_entries(p.max_replay_entries)?
+        .unwrap_or(defaults.max_replay_entries);
+
+    if jti_replay_window_secs < required {
+        return Err(ConfigError::AuthReplayWindowTooSmall {
+            window: jti_replay_window_secs,
+            freshness: dpop_freshness_secs,
+            skew: clock_skew_secs,
+            required,
+        });
+    }
+
+    Ok(AuthConfig {
+        clock_skew_secs,
+        dpop_freshness_secs,
+        jwks_refresh_secs,
+        discovery_refresh_secs,
+        on_demand_refresh_min_interval_secs,
+        jti_replay_window_secs,
+        max_replay_entries,
+    })
+}
+
+fn parse_auth_positive_u64(
+    key: &'static str,
+    value: Option<toml::Value>,
+) -> Result<Option<u64>, ConfigError> {
+    parse_positive_u64(key, value, move |v| ConfigError::InvalidAuthDurationSecs {
+        key,
+        value: v,
+    })
+}
+
+fn parse_max_replay_entries(value: Option<toml::Value>) -> Result<Option<usize>, ConfigError> {
+    let Some(v) = value else { return Ok(None) };
+    let parsed: u64 = match &v {
+        toml::Value::Integer(n) if *n >= MIN_REPLAY_ENTRIES as i64 => *n as u64,
+        toml::Value::Integer(n) => {
+            return Err(ConfigError::InvalidAuthMaxReplayEntries {
+                value: n.to_string(),
+            });
+        }
+        toml::Value::String(s) => s
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n >= MIN_REPLAY_ENTRIES as u64)
+            .ok_or_else(|| ConfigError::InvalidAuthMaxReplayEntries { value: s.clone() })?,
+        other => {
+            return Err(ConfigError::InvalidAuthMaxReplayEntries {
+                value: other.to_string(),
+            });
+        }
+    };
+    // `parsed as usize` silently truncates on 32-bit Unix targets — a
+    // value like 4_294_967_296 passes the u64 >= 1024 check but maps to
+    // 0 as usize, causing the replay store to reject every insert as
+    // memory pressure. Use a checked conversion so misconfiguration
+    // becomes a typed ConfigError instead.
+    let as_usize = usize::try_from(parsed).map_err(|_| {
+        ConfigError::InvalidAuthMaxReplayEntries {
+            value: parsed.to_string(),
+        }
+    })?;
+    Ok(Some(as_usize))
 }
 
 fn parse_bind_address(value: Option<String>) -> Result<SocketAddr, ConfigError> {

@@ -5,27 +5,60 @@ edition = "2024"
 rust-version = "1.95"
 
 [features]
-# Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel).
-# Every integration test under server/tests/ declares required-features = ["test-utils"].
-# Never enabled in release builds.
-test-utils = []
+# Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel,
+# auth::testing::*). Every integration test under server/tests/ declares
+# required-features = ["test-utils"]. Never enabled in release builds.
+#
+# Phase 3: the auth::testing helpers need ephemeral key generation (rsa, p256, rand,
+# rand_chacha). These are optional dependencies activated only when test-utils is on —
+# they're absent from the release binary. This pattern is required because Cargo's
+# [dev-dependencies] are not visible to the lib crate itself, only to test/example/bench
+# targets, so test-utils-gated lib code cannot rely on [dev-dependencies].
+test-utils = ["dep:rsa", "dep:p256", "dep:rand", "dep:rand_chacha"]
 
 [dependencies]
+# Phase 3 (FAPI 2.0 + DPoP auth core) — see specs/003-fapi-dpop-auth-core/plan.md
+# Complexity Tracking + research.md R1 for the justification of every new dep.
+arc-swap = "1"
 axum = "0.8"
+base64 = "0.22"
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 ipnet = "2.10"
+jsonwebtoken = "9"
 openidconnect = "4.0"
+parking_lot = "0.12"
+# Phase 3 test-utils-gated optional deps. Activated only by the `test-utils`
+# Cargo feature (see [features] above) so the production binary still excludes
+# all key-generation code paths. These must be regular [dependencies] (not
+# [dev-dependencies]) because [dev-dependencies] are invisible to the lib
+# crate itself, which is where `auth::testing` lives behind `cfg(feature = "test-utils")`.
+p256 = { version = "0.13", features = ["ecdsa"], optional = true }
+rand = { version = "0.8", optional = true }
+rand_chacha = { version = "0.3", optional = true }
+rsa = { version = "0.9", optional = true }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+subtle = "2"
 thiserror = "2.0"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync"] }
 toml = "0.8"
+# `tower` was Phase 2 dev-only (integration-test `ServiceExt::oneshot`).
+# Phase 3 promotes it to a regular dep because `auth::middleware::VaultGuard`
+# / `AdminGuard` implement `tower::Layer` as part of the public lib surface.
+tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 url = "2"
 
 [dev-dependencies]
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util"] }
+# Re-listed here (with the `util` feature) for `tower::ServiceExt::oneshot`
+# in integration tests; the runtime dep above lacks `util` to keep the
+# release binary slim.
 tower = { version = "0.5", features = ["util"] }
+trybuild = "1"
 
 [[test]]
 name = "config_load"
@@ -57,4 +90,81 @@ required-features = ["test-utils"]
 
 [[test]]
 name = "shutdown_drain"
+required-features = ["test-utils"]
+
+# Phase 3 (FAPI 2.0 + DPoP auth core) — see specs/003-fapi-dpop-auth-core/tasks.md for the
+# task-to-test mapping. Every stanza requires the existing test-utils feature so the in-crate
+# test surface (auth::testing helpers, MockOidcProvider) is reachable from integration tests
+# without polluting the release binary.
+
+[[test]]
+name = "cli_log_level"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_token_validation"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_dpop_validation"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_jwks_overlap_startup"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_jwks_refresh_scheduled"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_jwks_refresh_on_demand"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_disjoint_audiences_runtime"
+required-features = ["test-utils"]
+
+[[test]]
+name = "whoami_vault_happy_path"
+required-features = ["test-utils"]
+
+[[test]]
+name = "whoami_admin_happy_path"
+required-features = ["test-utils"]
+
+[[test]]
+name = "cross_audience_isolation"
+required-features = ["test-utils"]
+
+[[test]]
+name = "uniform_401_response"
+required-features = ["test-utils"]
+
+[[test]]
+name = "subject_isolation"
+required-features = ["test-utils"]
+
+[[test]]
+name = "log_redaction_auth"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_constant_time_timing"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_memory_pressure_503"
+required-features = ["test-utils"]
+
+[[test]]
+name = "auth_replay_cleanup"
+required-features = ["test-utils"]
+
+# Workspace-level conformance harness — see research.md R14. Lives at the repository root
+# (sibling of server/) so Phase 7 can extend it without source-file moves when the SPA crate
+# joins and the repo converts to a true Cargo workspace.
+[[test]]
+name = "conformance"
+path = "../tests/conformance/main.rs"
 required-features = ["test-utils"]

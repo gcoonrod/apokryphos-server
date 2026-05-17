@@ -6,7 +6,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use apokryphos_server::config::{ConfigError, load_from};
+use apokryphos_server::config::{AuthConfig, ConfigError, load_from};
 
 /// All eight required keys present and valid. Other tests start from this.
 fn full_env() -> BTreeMap<String, String> {
@@ -312,4 +312,141 @@ fn lowercase_env_name_is_treated_as_absent() {
     env.insert("apok_bind_address".into(), "127.0.0.1:8080".into());
     let err = load_from(env, None).expect_err("lowercase env is not recognized");
     assert!(matches!(err, ConfigError::Missing { key: "bind_address" }));
+}
+
+// ─────────────────── Phase 3 [auth] block coverage ───────────────────────
+//
+// Added in PR #4 review (Copilot) to close the test-coverage gap on the
+// new `[auth]` config surface. The seven tests below mirror the pattern
+// the rest of this file uses for the other config sections: positive
+// control, per-field positive integer parsing, per-field rejection,
+// `max_replay_entries` minimum, cross-field invariant, env-overrides-TOML.
+
+#[test]
+fn auth_block_absent_yields_defaults() {
+    // Full env, no TOML, no [auth] keys → AuthConfig::default() applied.
+    let cfg = load_from(full_env(), None).expect("absent [auth] block should be valid");
+    assert_eq!(cfg.auth, AuthConfig::default());
+}
+
+#[test]
+fn auth_duration_field_positive_toml() {
+    let toml = r#"
+        bind_address = "127.0.0.1:8080"
+        block_size_bytes = 1048576
+        storage_backend = "none"
+        trusted_proxies = []
+
+        [vault_oidc]
+        issuer_url = "https://issuer.example.invalid/vault"
+        audience = "apokryphos-vault"
+
+        [admin_oidc]
+        issuer_url = "https://issuer.example.invalid/admin"
+        audience = "apokryphos-admin"
+
+        [auth]
+        clock_skew_secs = 120
+        dpop_freshness_secs = 45
+    "#;
+    let cfg = load_from(BTreeMap::new(), Some(toml))
+        .expect("auth TOML with overrides should validate");
+    assert_eq!(cfg.auth.clock_skew_secs, 120);
+    assert_eq!(cfg.auth.dpop_freshness_secs, 45);
+    // Other fields keep their defaults.
+    assert_eq!(cfg.auth.jwks_refresh_secs, 3600);
+    assert_eq!(cfg.auth.discovery_refresh_secs, 86_400);
+}
+
+#[test]
+fn auth_duration_field_zero_rejected() {
+    let mut env = full_env();
+    env.insert("APOK_AUTH_CLOCK_SKEW_SECS".into(), "0".into());
+    let err = load_from(env, None).expect_err("zero duration should be rejected");
+    match err {
+        ConfigError::InvalidAuthDurationSecs { key, value } => {
+            assert_eq!(key, "clock_skew_secs");
+            assert_eq!(value, "0");
+        }
+        other => panic!("expected InvalidAuthDurationSecs, got {other:?}"),
+    }
+}
+
+#[test]
+fn auth_max_replay_entries_below_minimum_rejected() {
+    let mut env = full_env();
+    env.insert("APOK_AUTH_MAX_REPLAY_ENTRIES".into(), "512".into());
+    let err = load_from(env, None).expect_err("max_replay_entries below floor should be rejected");
+    assert!(matches!(err, ConfigError::InvalidAuthMaxReplayEntries { .. }));
+}
+
+#[test]
+fn auth_max_replay_entries_at_minimum_accepted() {
+    let mut env = full_env();
+    env.insert("APOK_AUTH_MAX_REPLAY_ENTRIES".into(), "1024".into());
+    let cfg = load_from(env, None).expect("max_replay_entries at floor should be accepted");
+    assert_eq!(cfg.auth.max_replay_entries, 1024);
+}
+
+#[test]
+fn auth_replay_window_below_freshness_plus_skew_rejected() {
+    // 60 + 30 = 90; window of 89 should fail the cross-field invariant.
+    let mut env = full_env();
+    env.insert("APOK_AUTH_CLOCK_SKEW_SECS".into(), "60".into());
+    env.insert("APOK_AUTH_DPOP_FRESHNESS_SECS".into(), "30".into());
+    env.insert("APOK_AUTH_JTI_REPLAY_WINDOW_SECS".into(), "89".into());
+    let err = load_from(env, None).expect_err("replay window < freshness + skew should be rejected");
+    match err {
+        ConfigError::AuthReplayWindowTooSmall {
+            window,
+            freshness,
+            skew,
+            required,
+        } => {
+            assert_eq!(window, 89);
+            assert_eq!(freshness, 30);
+            assert_eq!(skew, 60);
+            assert_eq!(required, 90);
+        }
+        other => panic!("expected AuthReplayWindowTooSmall, got {other:?}"),
+    }
+}
+
+#[test]
+fn auth_env_overrides_toml() {
+    let toml = r#"
+        bind_address = "127.0.0.1:8080"
+        block_size_bytes = 1048576
+        storage_backend = "none"
+        trusted_proxies = []
+
+        [vault_oidc]
+        issuer_url = "https://issuer.example.invalid/vault"
+        audience = "apokryphos-vault"
+
+        [admin_oidc]
+        issuer_url = "https://issuer.example.invalid/admin"
+        audience = "apokryphos-admin"
+
+        [auth]
+        clock_skew_secs = 999
+    "#;
+    let mut env = BTreeMap::new();
+    env.insert("APOK_AUTH_CLOCK_SKEW_SECS".into(), "7".into());
+    // Replay window must satisfy `>= dpop_freshness_secs + clock_skew_secs`.
+    // Defaults give freshness = 30; our env override sets skew = 7. Because
+    // jti_replay_window_secs is omitted from both TOML and env, `parse_auth`
+    // resolves it to `freshness + skew = 37` (NOT the AuthConfig::default()
+    // value of 90), and the cross-field invariant trivially holds at 37 >= 37.
+    let cfg = load_from(env, Some(toml))
+        .expect("env should override TOML for auth keys");
+    assert_eq!(cfg.auth.clock_skew_secs, 7, "env wins over TOML");
+    // Assert the resolved replay window matches the freshness+skew rule,
+    // not the AuthConfig::default() value — this is what the spec
+    // §Assumptions says ("`jti` replay window (default 90 s = freshness +
+    // skew)") and what parse_auth actually computes.
+    assert_eq!(
+        cfg.auth.jti_replay_window_secs, 37,
+        "resolved replay window = dpop_freshness_secs (30) + clock_skew_secs (7)"
+    );
 }

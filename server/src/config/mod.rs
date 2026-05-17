@@ -17,7 +17,7 @@ mod server_config;
 mod validate;
 
 pub use error::ConfigError;
-pub use server_config::{OidcAudienceConfig, ServerConfig, StorageBackend};
+pub use server_config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 
 pub(crate) use env::collect_env;
 pub(crate) use file::load_optional_file;

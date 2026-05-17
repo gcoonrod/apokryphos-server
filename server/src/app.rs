@@ -59,14 +59,83 @@ pub enum AppError {
 
     #[error("serve error during request handling: {0}")]
     Serve(#[source] io::Error),
+
+    /// Phase 3 auth subsystem startup failure: discovery or JWKS fetch
+    /// failed, JWKS was empty, or the two contexts' JWKS overlapped at
+    /// startup (FR-002, FR-006). `auth::context::ContextInitError` has
+    /// landed in this PR (T018) and is what `run()` produces, but the
+    /// variant payload is `String` here so the call site `format!`s the
+    /// typed error's `Display`-impl message instead of moving the error
+    /// itself. T028 (US2, dual-context `init_contexts`) will switch to
+    /// `ContextInitError` directly so the structured fields (e.g.,
+    /// `JwksOverlap.context_with_extra_key`) can be inspected by callers
+    /// — the `String` form is an interim type-erasure that loses field
+    /// access in exchange for not requiring `ContextInitError` to be
+    /// reachable from `app.rs` until the dual-context constructor lands.
+    #[error("auth subsystem initialization failed: {0}")]
+    Auth(String),
 }
 
 /// Production entry point. Returns `Err` for config-load / bind / serve
 /// failures; the caller (`main`) translates to an `ExitCode`.
+///
+/// Phase 3 US1 bootstrap order:
+///   1. `config::load()` — Phase 2.
+///   2. `auth::init_single_context(Vault, &cfg.vault_oidc, ...)` — fetch
+///      discovery + JWKS; FR-002 / FR-006 startup failures propagate as
+///      `AppError::Auth` (mapped to non-zero exit by `main`).
+///   3. Construct `Arc<JtiReplayStore>` from the validated `AuthConfig`.
+///   4. Bind listener (Phase 2).
+///   5. `emit_server_started` (Phase 2).
+///   6. `routes::build_router(state, Some(vault_ctx), Some(replay_store))`.
+///   7. Serve with graceful drain (Phase 2).
+///
+/// US2 (T035) will replace step 2 with the dual-context `init_contexts`
+/// and spawn the four refresh tasks + replay-store cleanup; US1 leaves
+/// that wiring for the follow-up.
 pub async fn run() -> Result<(), AppError> {
     let cfg = config::load()?;
     let bind_addr = cfg.bind_address;
     let drain_timeout = cfg.drain_timeout;
+
+    // Phase 3 US1 vault-context init (FR-002, FR-006).
+    //
+    // The startup OIDC fetches (discovery + JWKS) MUST fail fast rather
+    // than hang the binary. `reqwest::Client::new()` imposes no
+    // request/read timeout — only an OS connect timeout — so a stalling
+    // issuer would block `run()` before `bind` and `emit_server_started`.
+    // We build the client with an explicit 30-second total request
+    // timeout. A follow-on task can promote this to an `AuthConfig`
+    // knob (e.g. `oidc_http_timeout_secs`) when configurability
+    // matters; for now 30s is a defensive default that catches
+    // pathological providers without breaking sane ones.
+    let auth_cfg = Arc::new(cfg.auth.clone());
+    // Build the OIDC HTTP client with two production defences:
+    //   1. `timeout(30s)` — a stalling issuer cannot hang `run()` before
+    //      bind + emit_server_started (PR #4 review-cycle Round 1).
+    //   2. `redirect(Policy::none())` — reqwest's default policy is
+    //      `Policy::limited(10)`, which silently follows 3xx redirects.
+    //      An HTTPS discovery or `jwks_uri` could redirect to `http://`
+    //      and bypass the scheme check that runs against the *original*
+    //      URL. Disabling redirects entirely is the simplest defence:
+    //      a legitimate OIDC provider should not be issuing redirects
+    //      from these endpoints in the first place.
+    let http_client = openidconnect::reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| AppError::Auth(format!("failed to build OIDC HTTP client: {e}")))?;
+    let vault_ctx = crate::auth::init_single_context(
+        crate::auth::AudienceTag::Vault,
+        &cfg.vault_oidc,
+        Arc::clone(&auth_cfg),
+        &http_client,
+    )
+    .await
+    .map_err(|e| AppError::Auth(e.to_string()))?;
+
+    let replay_store = Arc::new(crate::auth::JtiReplayStore::new(Arc::clone(&auth_cfg)));
+
     let state = AppState {
         config: Arc::new(cfg),
     };
@@ -86,7 +155,7 @@ pub async fn run() -> Result<(), AppError> {
 
     emit_server_started(local_addr);
 
-    let router = routes::build_router(state);
+    let router = routes::build_router(state, Some(vault_ctx), Some(replay_store));
     serve_with_shutdown(
         listener,
         router,

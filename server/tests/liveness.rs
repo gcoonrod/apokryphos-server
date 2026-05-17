@@ -17,7 +17,11 @@ fn router() -> axum::Router {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    build_router(state)
+    // Phase 3 T023: build_router gained optional vault context + replay store
+    // parameters. Phase 2's liveness tests exercise /health (unauthenticated)
+    // and the path-mismatch fallback only — neither needs the vault chain,
+    // so pass None / None to skip vault-route mounting.
+    build_router(state, None, None)
 }
 
 /// T040: `GET /health` returns 200 + exact 15-byte body.

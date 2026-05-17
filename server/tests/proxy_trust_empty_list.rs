@@ -30,6 +30,7 @@ async fn empty_trusted_proxies_always_ignores_forwarded_headers() {
         vault_oidc: OidcAudienceConfig::new("vault", "https://x.invalid".into(), "v".into()).unwrap(),
         admin_oidc: OidcAudienceConfig::new("admin", "https://y.invalid".into(), "a".into()).unwrap(),
         drain_timeout: std::time::Duration::from_secs(30),
+        auth: apokryphos_server::config::AuthConfig::default(),
     };
     let state = AppState { config: Arc::new(cfg) };
     let router = Router::new()

@@ -33,6 +33,7 @@ fn build_test_router(trusted: Vec<ipnet::IpNet>) -> Router {
         vault_oidc: OidcAudienceConfig::new("vault", "https://x.invalid".into(), "v".into()).unwrap(),
         admin_oidc: OidcAudienceConfig::new("admin", "https://y.invalid".into(), "a".into()).unwrap(),
         drain_timeout: std::time::Duration::from_secs(30),
+        auth: apokryphos_server::config::AuthConfig::default(),
     };
     let state = AppState { config: Arc::new(cfg) };
     Router::new()

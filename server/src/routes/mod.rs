@@ -1,9 +1,16 @@
-//! HTTP router assembly (FR-019..022, Clarify-Q1, invariants R1..R7).
+//! HTTP router assembly (FR-019..022, FR-030, Clarify-Q1, invariants R1..R7).
 //!
-//! Exactly one route is *registered*: `/health`. The handler dispatches on
-//! method internally — `GET` returns the JSON body, every other method
-//! falls through to a 404 that is byte-identical to the path-mismatch
-//! fallback (Clarify-Q1).
+//! Two routes are registered in the production router:
+//!   * `/health` — unauthenticated; the handler dispatches on method
+//!     internally (`GET` returns the JSON body, every other method falls
+//!     through to a 404 byte-identical to the path-mismatch fallback,
+//!     Clarify-Q1).
+//!   * `/api/whoami` — vault-guarded GET (Phase 3 FR-027). Mounted only
+//!     when the caller supplies the optional `vault_ctx` + `replay_store`
+//!     parameters. Lives in the `api` submodule so its 405→404 conversion
+//!     (FR-030) is colocated with the handler; the guard is layered on
+//!     the GET method specifically so non-GET requests never invoke the
+//!     auth pipeline.
 //!
 //! ## Why `any(...)` instead of `get(...)` for `/health` (R13 amendment)
 //!
@@ -15,28 +22,57 @@
 //! method check is the structural way to comply; the plan's prohibition
 //! on `any` was based on a misreading of axum 0.8's actual API.
 
+mod api;
 mod health;
 
+use std::sync::Arc;
+
+use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{Method, StatusCode, Uri};
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::any;
-use axum::Router;
 
 use crate::app::AppState;
+use crate::auth::context::OidcContext;
+use crate::auth::replay::JtiReplayStore;
 use crate::logging::events::emit_request_rejected;
 use crate::proxy_trust::{self, EffectiveAddress};
 
-/// Build the production router. Composes the proxy-trust layer (so the
-/// `request.rejected` event carries the effective address) and registers
-/// only `/health` (via `any`). Every other path falls through to
-/// `fallback_404`. Every other method on `/health` is rejected inside
-/// `health::handle_health`.
-pub fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", any(health::handle_health))
+/// Build the production router. Composes:
+///
+///   - `/health` (unauthenticated, registered via `any` so method
+///     mismatches return 404 not 405 — Phase 2 Clarify-Q1).
+///   - `/api/whoami` (vault-guarded — FR-027) when the vault context and
+///     replay store are supplied. Phase 3 US1 always supplies them; the
+///     `Option<...>` shape leaves room for the dual-context wiring in
+///     US2 (T034).
+///   - Phase 2's proxy-trust layer (so the `request.rejected` event
+///     carries the effective client address).
+///   - Phase 2's path-mismatch 404 fallback. Method mismatches on the
+///     new authenticated routes inherit this same fallback (FR-030).
+pub fn build_router(
+    state: AppState,
+    vault_ctx: Option<Arc<OidcContext>>,
+    replay_store: Option<Arc<JtiReplayStore>>,
+) -> Router {
+    let mut router = Router::new().route("/health", any(health::handle_health));
+
+    if let (Some(ctx), Some(replay)) = (vault_ctx, replay_store) {
+        // Vault subtree (`/api/*`). The guard is layered on the GET
+        // method INSIDE `vault_routes` (not on the Router itself), so
+        // non-GET methods on /api/whoami return 404 via the
+        // method_not_allowed_fallback without ever invoking the auth
+        // pipeline. This closes the FR-030 leak that PR #4 review
+        // identified: a guard layered at the Router level would return
+        // 401 for non-GET requests, revealing that the route exists.
+        let vault_routes = api::vault_routes(ctx, replay);
+        router = router.merge(vault_routes);
+    }
+
+    router
         .fallback(fallback_404)
         .layer(middleware::from_fn_with_state(
             state.clone(),
