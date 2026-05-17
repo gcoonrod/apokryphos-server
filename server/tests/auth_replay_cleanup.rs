@@ -26,7 +26,6 @@ use apokryphos_server::config::AuthConfig;
 use tokio::time::Instant;
 
 const N: usize = 100;
-const VAULT_TAG: u8 = 1; // mirrors AudienceTag::Vault::as_jti_key_byte()
 
 fn jti_keys(prefix: &str) -> Vec<(String, JtiKey)> {
     (0..N)
@@ -60,7 +59,6 @@ async fn maintenance_tick_removes_expired_and_allows_reinsertion() {
     // Advance past the last deadline.
     tokio::time::advance(Duration::from_millis((N as u64) + 10)).await;
     store.maintenance_tick(Instant::now().into_std());
-    let _ = VAULT_TAG; // (named constant kept for inline doc clarity)
 
     // Both checks: the lazy count AND a true round-trip insert.
     assert_eq!(store.len(), 0, "len() must drop to zero after cleanup");
