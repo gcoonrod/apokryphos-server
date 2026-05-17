@@ -206,10 +206,17 @@ impl JtiReplayStore {
 /// the loop, matching the symmetric pattern in
 /// `jwks::scheduled_refresh_task` — there's no useful work to do at
 /// t=0 (the store has just been created and is empty).
-pub(crate) async fn cleanup_task(
+pub async fn cleanup_task(
     store: std::sync::Arc<JtiReplayStore>,
     mut shutdown: crate::shutdown::ShutdownRx,
 ) {
+    // Defensive early-exit (same rationale as jwks::scheduled_refresh_task):
+    // a receiver cloned after the watch has flipped would otherwise
+    // never observe `changed()`.
+    if *shutdown.borrow() {
+        return;
+    }
+
     let window_secs = store.config.jti_replay_window_secs;
     // Cleanup quarter-window keeps lag bounded: any expired entry is
     // gone within `window/4` seconds of its deadline. Floor at 1s so a

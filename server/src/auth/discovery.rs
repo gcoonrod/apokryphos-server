@@ -134,10 +134,17 @@ pub async fn fetch_discovery(
 /// Like `jwks::scheduled_refresh_task`, the first immediate tick from
 /// `tokio::time::interval` is consumed before the loop — the startup
 /// fetch already populated `ctx.discovery`.
-pub(crate) async fn scheduled_refresh_task(
+pub async fn scheduled_refresh_task(
     ctx: std::sync::Arc<crate::auth::context::OidcContext>,
     mut shutdown: crate::shutdown::ShutdownRx,
 ) {
+    // Defensive early-exit (same rationale as jwks::scheduled_refresh_task):
+    // a receiver cloned after the watch has flipped would otherwise
+    // never observe `changed()`.
+    if *shutdown.borrow() {
+        return;
+    }
+
     let dur = std::time::Duration::from_secs(ctx.auth_config.discovery_refresh_secs);
     let mut tick = tokio::time::interval(dur);
     tick.tick().await;

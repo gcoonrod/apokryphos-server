@@ -313,7 +313,7 @@ async fn jwks_uri_change_propagates_through_scheduled_discovery_refresh() {
     // advertises the new URL.
     mock.set_discovery_jwks_uri("/jwks-v2.json");
 
-    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let discovery_task = tokio::spawn(
         apokryphos_server::auth::discovery::scheduled_refresh_task(
             Arc::clone(&ctx),
@@ -346,6 +346,12 @@ async fn jwks_uri_change_propagates_through_scheduled_discovery_refresh() {
         "the old /jwks.json must not have been hit again — FR-003a's edge case"
     );
 
-    drop(discovery_task);
-    drop(jwks_task);
+    // Signal shutdown and await the background tasks so the test
+    // deterministically tears down. Dropping the JoinHandles would
+    // detach them — they'd keep running until the runtime exits, and
+    // could in principle interfere with subsequent tests sharing the
+    // process.
+    let _ = shutdown_tx.send(true);
+    let _ = discovery_task.await;
+    let _ = jwks_task.await;
 }

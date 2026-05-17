@@ -183,10 +183,20 @@ pub async fn fetch_jwks(
 /// consume that immediate tick before entering the select-loop so the
 /// FIRST refresh happens after `jwks_refresh_secs`, not on entry —
 /// the initial JWKS was fetched at startup by `init_contexts`.
-pub(crate) async fn scheduled_refresh_task(
+pub async fn scheduled_refresh_task(
     ctx: std::sync::Arc<crate::auth::context::OidcContext>,
     mut shutdown: crate::shutdown::ShutdownRx,
 ) {
+    // Defensive early-exit: a `watch::Receiver` tracks its own "last
+    // seen" version, and a receiver cloned AFTER the watch has been
+    // flipped to `true` would see `true` as already-seen — its next
+    // `changed()` call would block forever. Production wires every
+    // receiver before any signal can fire, but the check costs one
+    // atomic load and rules out the race entirely.
+    if *shutdown.borrow() {
+        return;
+    }
+
     let dur = std::time::Duration::from_secs(ctx.auth_config.jwks_refresh_secs);
     let mut tick = tokio::time::interval(dur);
     // Consume the immediate first tick — `interval(d)` fires at t=0,
