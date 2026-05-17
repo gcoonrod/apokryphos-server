@@ -22,7 +22,8 @@ use std::time::Duration;
 use apokryphos_server::auth::AudienceTag;
 use apokryphos_server::auth::context::{ContextInitError, init_contexts};
 use apokryphos_server::auth::testing::{
-    MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair,
+    MockOidcProvider, deterministic_rng, es256_public_jwk, es256_thumbprint_b64url,
+    generate_es256_keypair,
 };
 use apokryphos_server::config::{
     AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
@@ -89,10 +90,16 @@ async fn init_contexts_rejects_jwks_overlap_at_startup() {
             "diagnostic must NOT contain JWK y coordinate (key material): {diagnostic}"
         );
     }
-    // No raw thumbprint hex/base64 leakage either. The error type has no
-    // field for the thumbprint at all, so this is structural — assert
-    // anyway as a regression catch if the variant is ever extended.
-    let _ = diagnostic;
+    // No raw thumbprint leakage either. The shared key's RFC 7638
+    // thumbprint (base64url-encoded SHA-256) is the most likely shape a
+    // future regression could leak — it's what the parser already
+    // computes per key. Asserting its absence catches a future variant
+    // extension that adds a thumbprint field to the Display surface.
+    let shared_thumbprint = es256_thumbprint_b64url(shared.verifying_key());
+    assert!(
+        !diagnostic.contains(&shared_thumbprint),
+        "diagnostic must NOT contain the shared key's RFC 7638 thumbprint: {diagnostic}"
+    );
 }
 
 fn make_config(vault_issuer: url::Url, admin_issuer: url::Url) -> ServerConfig {

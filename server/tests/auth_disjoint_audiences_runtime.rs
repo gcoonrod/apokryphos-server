@@ -148,11 +148,7 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
     // (now-overlapping) vault JWKS → install_refreshed_jwks refuses the
     // install. The original request still 401s because the third key
     // remains unknown after the rejected install. ───────────────────────
-    let third_jwk = es256_public_jwk(third_signing.verifying_key(), Some(THIRD_KID));
-    let third_thumbprint = match third_jwk.get("x") {
-        Some(_) => es256_thumbprint_b64url(third_signing.verifying_key()),
-        None => panic!("third_jwk should have x coordinate"),
-    };
+    let third_thumbprint = es256_thumbprint_b64url(third_signing.verifying_key());
     let third_token_claims = MintTokenClaims {
         sub: "third-key-user".to_string(),
         aud: VAULT_AUD.to_string(),

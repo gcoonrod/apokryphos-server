@@ -92,13 +92,27 @@ pub struct OidcContext {
     /// re-check the JWKS after waking.
     pub(crate) refresh_notify: Notify,
 
-    /// R6 on-demand-refresh rate limit: seconds-since-Unix-epoch of the
-    /// last attempt. Initialized to 0 (no prior attempt). Updated via
-    /// `compare_exchange` so multiple in-flight requests collapse to one
-    /// fetch per rate-limit window. Read/written by T031's
-    /// `auth::jwks::on_demand_refresh`.
+    /// R6 on-demand-refresh rate limit: seconds-since-Unix-epoch of when
+    /// a refresh attempt was *claimed* (set via `compare_exchange` BEFORE
+    /// the fetch begins). Pairs with `last_refresh_completed` (set AFTER
+    /// the install) so loser-path callers in `on_demand_refresh` can
+    /// distinguish "winner is still fetching" from "winner has already
+    /// finished" — the latter case lets losers retry immediately without
+    /// waiting on the fire-and-forget `refresh_notify`.
     #[allow(dead_code)]
     pub(crate) last_on_demand_refresh: AtomicU64,
+
+    /// Seconds-since-Unix-epoch of the most recent refresh *completion*
+    /// (success or failure — set unconditionally after the fetch
+    /// resolves, before `notify_waiters` fires). Monotonic non-decreasing.
+    /// Lets `on_demand_refresh` losers close the `notify_waiters` race:
+    /// `notify_waiters` doesn't store a permit, so a loser whose
+    /// `notified()` future is created after the winner has already
+    /// fired the notify would otherwise wait the full timeout for
+    /// nothing. The loser re-checks this field against its `prev`
+    /// snapshot and short-circuits when a completion has been observed.
+    #[allow(dead_code)]
+    pub(crate) last_refresh_completed: AtomicU64,
 
     /// Cross-context reach (US2 / T028–T030). `Weak` breaks the
     /// `Arc<OidcContext> ⇌ Arc<OidcContext>` cycle that two strong
@@ -211,6 +225,7 @@ pub async fn init_single_context(
         http_client: http_client.clone(),
         refresh_notify: Notify::new(),
         last_on_demand_refresh: AtomicU64::new(0),
+        last_refresh_completed: AtomicU64::new(0),
         other: OnceLock::new(),
     }))
 }

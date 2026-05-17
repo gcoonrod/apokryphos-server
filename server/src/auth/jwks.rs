@@ -179,27 +179,26 @@ pub async fn fetch_jwks(
 ///
 ///   - **Winner path** (one task per rate-limit window): atomically claim
 ///     the `last_on_demand_refresh` slot via `compare_exchange`. Fetch
-///     the JWKS via `fetch_jwks` and install through
-///     `auth::context::install_refreshed_jwks` (which runs the FR-007
-///     runtime overlap check). When the fetch + install completes —
-///     successfully or not — wake every waiter with `notify_waiters`.
-///     Returns `true` only on a successful install, so the caller knows
-///     a retry is meaningful.
-///   - **Loser path** (all later callers within the same window): the
-///     CAS fails. Await `refresh_notify` with a small timeout
-///     (`on_demand_refresh_min_interval_secs / 2`). On wake-up, return
-///     `true` so the caller re-checks the JWKS once. On timeout, return
-///     `false`.
-///   - **Stale-but-uncontended path**: the CAS succeeds (because the
-///     stored timestamp is older than `now - interval`) — same as
-///     winner path.
+///     the JWKS and install via `auth::context::install_refreshed_jwks`
+///     (which runs the FR-007 runtime overlap check). Record the
+///     completion timestamp in `last_refresh_completed`, then wake
+///     every waiter with `notify_waiters`. Returns `true` only on a
+///     successful install, so the caller knows a retry is meaningful.
+///   - **Loser path** (all later callers within the same window OR
+///     callers who lost the CAS by microseconds): first, check whether
+///     a refresh has already completed since the caller's `prev`
+///     snapshot — `last_refresh_completed >= prev` means the winner
+///     has finished and the caller can retry immediately. Otherwise,
+///     wait briefly on `refresh_notify`, then re-check
+///     `last_refresh_completed` to close the `notify_waiters` race
+///     (the notify is fire-and-forget; a future registered after the
+///     notify fires would otherwise wait the full timeout for nothing).
 ///
 /// The returned `bool` is "**caller may retry once**", not "fetch
-/// succeeded". A fetch failure that completes within the timeout still
-/// produces `true` for waiters (we woke them; they should re-check
-/// because the rate-limit window has reset). The retry will fail again
-/// against the unchanged JWKS, which is the correct semantics: the
-/// caller's signature error becomes the final answer.
+/// succeeded". A fetch failure still wakes waiters and bumps
+/// `last_refresh_completed`; the retry will then fail against the
+/// unchanged JWKS, which is the correct semantics — the caller's
+/// signature error becomes the final answer.
 pub(crate) async fn on_demand_refresh(ctx: &crate::auth::context::OidcContext) -> bool {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
@@ -217,27 +216,29 @@ pub(crate) async fn on_demand_refresh(ctx: &crate::auth::context::OidcContext) -
 
     if now_secs < cutoff {
         // Inside the rate-limit window. Some other task either already
-        // ran the refresh or is running it now; wait briefly for the
-        // Notify and let the caller re-check the JWKS on wake.
-        return tokio::time::timeout(wait_timeout, ctx.refresh_notify.notified())
-            .await
-            .is_ok();
+        // ran the refresh (in which case `last_refresh_completed >= prev`
+        // and we can retry immediately) or is running it right now
+        // (wait briefly + re-check on timeout).
+        return wait_for_completion(ctx, prev, wait_timeout).await;
     }
 
     // Try to claim the slot. If another task beat us to the CAS by
-    // microseconds, fall back to the waiter path — the winner will
-    // notify us when its fetch completes.
+    // microseconds, fall back to the waiter path — the new winner's
+    // CAS advanced last_on_demand_refresh, so `prev` is now stale, but
+    // `last_refresh_completed` still grows monotonically and the
+    // wait_for_completion check works against the snapshot we took.
     if ctx
         .last_on_demand_refresh
         .compare_exchange(prev, now_secs, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        return tokio::time::timeout(wait_timeout, ctx.refresh_notify.notified())
-            .await
-            .is_ok();
+        return wait_for_completion(ctx, prev, wait_timeout).await;
     }
 
-    // Winner path. Fetch + install inline; wake waiters regardless.
+    // Winner path. Fetch + install inline; record completion AFTER the
+    // install resolves but BEFORE the notify, so any thread that
+    // re-checks `last_refresh_completed` on the wake-side sees the
+    // completion timestamp ≥ the start timestamp it observed.
     let jwks_uri = ctx.discovery.load().jwks_uri.clone();
     let install_result = match fetch_jwks(&ctx.http_client, &jwks_uri).await {
         Ok(new_jwks) => crate::auth::context::install_refreshed_jwks(ctx, new_jwks).is_ok(),
@@ -250,8 +251,45 @@ pub(crate) async fn on_demand_refresh(ctx: &crate::auth::context::OidcContext) -
             false
         }
     };
+    // Store-Release pairs with the Load-Acquire in wait_for_completion.
+    // After this point, every loser who reads `last_refresh_completed`
+    // either sees ≥ now_secs (and short-circuits) or is woken by the
+    // notify_waiters below.
+    ctx.last_refresh_completed
+        .store(now_secs, Ordering::Release);
     ctx.refresh_notify.notify_waiters();
     install_result
+}
+
+/// Loser-path helper for `on_demand_refresh`. Returns `true` if a
+/// refresh completion has been observed for an attempt that began
+/// at-or-after `prev` — either before this function was called, or
+/// during the brief wait on `refresh_notify`, or after a timeout
+/// re-check. This closes the race where `notify_waiters` fires before
+/// the loser's `notified()` future is created (the notify carries no
+/// permit; a future registered after the notify will never wake from
+/// it, but the re-check catches the completion timestamp).
+async fn wait_for_completion(
+    ctx: &crate::auth::context::OidcContext,
+    prev: u64,
+    wait_timeout: std::time::Duration,
+) -> bool {
+    use std::sync::atomic::Ordering;
+
+    // Fast path: a completion ≥ prev has already been recorded. No
+    // wait needed; the caller can retry immediately.
+    if ctx.last_refresh_completed.load(Ordering::Acquire) >= prev {
+        return true;
+    }
+
+    // Slow path: wait briefly for a notification. We discard the
+    // timeout's Ok/Err — the re-check below is authoritative.
+    let _ = tokio::time::timeout(wait_timeout, ctx.refresh_notify.notified()).await;
+
+    // Post-wait re-check. If a winner completed during our wait (or
+    // even before — closing the notify_waiters race), the comparison
+    // catches it.
+    ctx.last_refresh_completed.load(Ordering::Acquire) >= prev
 }
 
 /// Parse a raw `JwkSet` into the FR-010a-filtered indexed `Jwks`. Public
