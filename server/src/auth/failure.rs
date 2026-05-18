@@ -93,7 +93,9 @@ impl AuthFailure {
 /// Headers (FR-029):
 ///   - `WWW-Authenticate: DPoP algs="PS256 ES256"` (fixed value)
 ///   - `Content-Length: 0`
+///
 /// Body: empty.
+///
 /// Forbidden: `Content-Type`, `Retry-After`, any error-detail header.
 pub fn respond_401() -> Response<Body> {
     Response::builder()

@@ -25,6 +25,7 @@
 //!      the overlapping JWKS, both audiences would now share a key —
 //!      and SC-007's runtime guarantee would be broken.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;

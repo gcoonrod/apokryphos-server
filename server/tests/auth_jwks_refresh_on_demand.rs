@@ -24,6 +24,7 @@
 //!      window elapses, a fresh request triggers a second on-demand
 //!      fetch that installs the rotated JWKS and the retry succeeds.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;

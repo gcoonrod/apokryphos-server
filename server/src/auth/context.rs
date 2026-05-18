@@ -302,12 +302,10 @@ pub async fn init_contexts(
     vault_ctx
         .other
         .set(Arc::downgrade(&admin_ctx))
-        .ok()
         .expect("context cross-reach already initialized (vault → admin)");
     admin_ctx
         .other
         .set(Arc::downgrade(&vault_ctx))
-        .ok()
         .expect("context cross-reach already initialized (admin → vault)");
 
     Ok((vault_ctx, admin_ctx))

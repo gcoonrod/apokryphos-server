@@ -19,6 +19,7 @@
 //! only `authenticate_common`). Each #[tokio::test] below drives one
 //! of those arms end-to-end so both are exercised.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;

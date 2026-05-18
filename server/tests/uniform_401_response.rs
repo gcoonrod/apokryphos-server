@@ -199,11 +199,16 @@ fn req(method: Method, uri: &str, auth: Option<&str>, dpop: Option<&str>) -> Req
     b.body(Body::empty()).unwrap()
 }
 
+/// Builds a `Request<Body>` for one row of the fixture table. Captured
+/// closures are sometimes stateful (the replay case memoizes its priming
+/// proof), so the table holds boxed `Fn` rather than function pointers.
+type RequestBuilder = Box<dyn Fn(&Fixture) -> Request<Body> + Send + Sync>;
+
 /// One row of the failure-cause fixture table.
 struct Case {
     label: &'static str,
     /// Lazily builds the request because some causes mutate state (replay).
-    request: Box<dyn Fn(&Fixture) -> Request<Body> + Send + Sync>,
+    request: RequestBuilder,
 }
 
 fn build_cases() -> Vec<Case> {

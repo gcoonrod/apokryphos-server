@@ -24,6 +24,7 @@
 //! Each scenario is its own `#[tokio::test]` so a failure isolates to
 //! the specific behavior under test.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;

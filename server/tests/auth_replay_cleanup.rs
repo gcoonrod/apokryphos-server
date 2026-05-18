@@ -18,6 +18,7 @@
 //! Uses `tokio::time::pause()` so the test is deterministic and runs
 //! in milliseconds.
 
+#![allow(clippy::field_reassign_with_default)]
 use std::sync::Arc;
 use std::time::Duration;
 

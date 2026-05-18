@@ -62,9 +62,7 @@ const RUNS_PER_PREFIX: usize = 10_000;
 
 fn build_test(control: &[u8; 32], match_prefix: usize) -> [u8; 32] {
     let mut test = [0xBBu8; 32];
-    for i in 0..match_prefix {
-        test[i] = control[i];
-    }
+    test[..match_prefix].copy_from_slice(&control[..match_prefix]);
     test
 }
 

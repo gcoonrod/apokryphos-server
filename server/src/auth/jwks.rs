@@ -124,12 +124,12 @@ impl Jwks {
     /// returns the matching key first; if absent or no match, returns the
     /// keyless set as a fallback (FR-011 verification tries each in order).
     pub fn lookup_candidates(&self, kid: Option<&str>) -> Vec<Arc<Jwk>> {
-        if let Some(k) = kid {
-            if let Some(found) = self.by_kid.get(k) {
-                return vec![Arc::clone(found)];
-            }
+        if let Some(k) = kid
+            && let Some(found) = self.by_kid.get(k)
+        {
+            return vec![Arc::clone(found)];
         }
-        self.keyless.iter().cloned().collect()
+        self.keyless.to_vec()
     }
 
     /// Look up a key by its RFC 7638 thumbprint. Used for the FR-022
