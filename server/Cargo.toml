@@ -26,7 +26,7 @@ base64 = "0.22"
 bytes = "1"
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 ipnet = "2.10"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 openidconnect = "4.0"
 parking_lot = "0.12"
 # Phase 3 test-utils-gated optional deps. Activated only by the `test-utils`
