@@ -18,6 +18,10 @@ pub struct PartialConfig {
     pub bind_address: Option<String>,
     pub block_size_bytes: Option<toml::Value>,
     pub storage_backend: Option<String>,
+    /// Phase 4 — nested `[storage]` table; currently only carries the
+    /// `local_fs` sub-table. Distinct top-level key from `storage_backend`
+    /// (which remains a scalar discriminator).
+    pub storage: Option<PartialStorage>,
     pub trusted_proxies: Option<TrustedProxiesSource>,
     pub drain_timeout_secs: Option<toml::Value>,
     pub vault_oidc: Option<PartialOidc>,
@@ -32,6 +36,22 @@ pub struct PartialConfig {
 pub struct PartialOidc {
     pub issuer_url: Option<String>,
     pub audience: Option<String>,
+}
+
+/// Phase 4 — `[storage]` block. Currently carries only `local_fs`; reserved
+/// for `s3` etc. in later phases.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PartialStorage {
+    pub local_fs: Option<PartialStorageLocalFs>,
+}
+
+/// Phase 4 — `[storage.local_fs]` block; `root` is the absolute filesystem
+/// path under which the local-FS provider stores blocks.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PartialStorageLocalFs {
+    pub root: Option<String>,
 }
 
 /// Partial `[auth]` block. Every field is optional; absent → use the
@@ -75,6 +95,13 @@ pub fn collect_env(env: &BTreeMap<String, String>) -> PartialConfig {
     }
     if let Some(v) = env.get("APOK_STORAGE_BACKEND") {
         p.storage_backend = Some(v.clone());
+    }
+    if let Some(v) = env.get("APOK_STORAGE_LOCAL_FS_ROOT") {
+        p.storage = Some(PartialStorage {
+            local_fs: Some(PartialStorageLocalFs {
+                root: Some(v.clone()),
+            }),
+        });
     }
     if let Some(v) = env.get("APOK_TRUSTED_PROXIES") {
         // Env form is comma-separated; empty string = empty list (R14, C8).

@@ -71,6 +71,11 @@ pub struct TestServer {
     // Mocks held so background tasks stay alive for the test's duration.
     _vault_mock: MockOidcProvider,
     _admin_mock: MockOidcProvider,
+    // Phase 4: optional block-storage root. When `Some`, the assembled
+    // router has block routes mounted under the vault subtree and the
+    // `LocalFsProvider` writes blocks under this tempdir for the test's
+    // duration. The `TempDir` is held to keep the tree alive until drop.
+    _block_root: Option<tempfile::TempDir>,
 }
 
 impl TestServer {
@@ -122,7 +127,13 @@ impl TestServer {
         let state = AppState {
             config: Arc::new(cfg.clone()),
         };
-        let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
+        let router = build_router(
+            state,
+            Some(vault_ctx),
+            Some(admin_ctx),
+            Some(replay_store),
+            None,
+        );
 
         TestServer {
             router,
@@ -132,6 +143,86 @@ impl TestServer {
             admin_issuer,
             _vault_mock: vault_mock,
             _admin_mock: admin_mock,
+            _block_root: None,
+        }
+    }
+
+    /// Phase 4 variant constructor: boots a `TestServer` with a fresh
+    /// `LocalFsProvider`-backed block-storage root, so `/api/blocks/{id}`
+    /// is mounted under the vault subtree. Used by the
+    /// `phase4_block_round_trip` smoke test to exercise end-to-end
+    /// composition of Phase 3 auth + Phase 4 storage.
+    pub async fn start_with_local_fs_storage() -> Self {
+        use apokryphos_server::storage::{LocalFsProvider, StorageProvider};
+
+        let mut rng = deterministic_rng(0xB10C);
+        let vault_signing = generate_es256_keypair(&mut rng);
+        let admin_signing = generate_es256_keypair(&mut rng);
+
+        let vault_jwks = serde_json::json!({
+            "keys": [es256_public_jwk(vault_signing.verifying_key(), Some(VAULT_KID))]
+        });
+        let admin_jwks = serde_json::json!({
+            "keys": [es256_public_jwk(admin_signing.verifying_key(), Some(ADMIN_KID))]
+        });
+        let vault_mock = MockOidcProvider::start(vault_jwks).await;
+        let admin_mock = MockOidcProvider::start(admin_jwks).await;
+        let vault_issuer = vault_mock.issuer_url();
+        let admin_issuer = admin_mock.issuer_url();
+
+        let block_root = tempfile::tempdir().expect("conformance: tempdir for block root");
+
+        let cfg = ServerConfig {
+            bind_address: "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+            // Small block size so smoke tests run quickly.
+            block_size_bytes: 256,
+            storage_backend: StorageBackend::LocalFs {
+                root: block_root.path().to_path_buf(),
+            },
+            trusted_proxies: vec![],
+            vault_oidc: OidcAudienceConfig {
+                issuer_url: vault_issuer.clone(),
+                audience: VAULT_AUD.to_string(),
+            },
+            admin_oidc: OidcAudienceConfig {
+                issuer_url: admin_issuer.clone(),
+                audience: ADMIN_AUD.to_string(),
+            },
+            drain_timeout: Duration::from_secs(5),
+            auth: AuthConfig::default(),
+        };
+        let http_client = reqwest::Client::new();
+        let (vault_ctx, admin_ctx) = init_contexts(&cfg, &http_client)
+            .await
+            .expect("init_contexts must succeed");
+
+        let auth_cfg = Arc::new(cfg.auth.clone());
+        let replay_store = Arc::new(JtiReplayStore::new(Arc::clone(&auth_cfg)));
+
+        let storage: Arc<dyn StorageProvider> = Arc::new(LocalFsProvider::new_unchecked(
+            block_root.path().to_path_buf(),
+        ));
+
+        let state = AppState {
+            config: Arc::new(cfg.clone()),
+        };
+        let router = build_router(
+            state,
+            Some(vault_ctx),
+            Some(admin_ctx),
+            Some(replay_store),
+            Some(storage),
+        );
+
+        TestServer {
+            router,
+            vault_signing,
+            admin_signing,
+            vault_issuer,
+            admin_issuer,
+            _vault_mock: vault_mock,
+            _admin_mock: admin_mock,
+            _block_root: Some(block_root),
         }
     }
 

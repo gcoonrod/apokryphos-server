@@ -10,7 +10,9 @@
 //!   `replay`, `testing`); Phase 3 fills in `context`, `discovery`, `dpop`,
 //!   `jwks`, `middleware`, `token`. See `specs/003-fapi-dpop-auth-core/`.
 //! - `cli/` (Phase 3): live. Hosts the `--log-level` CLI flag (FR-033a).
-//! - `storage/` (Phase 4): still a placeholder, NOT re-exported.
+//! - `storage/` (Phase 4): live. Hosts the `StorageProvider` trait, the
+//!   `BlockId` newtype, and the first concrete implementation
+//!   (`LocalFsProvider`). See `specs/004-block-storage/`.
 //!
 //! ## Target platform
 //!
@@ -36,6 +38,7 @@ pub mod logging;
 pub mod proxy_trust;
 pub mod routes;
 pub mod shutdown;
+pub mod storage;
 
 mod app;
 

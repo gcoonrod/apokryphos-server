@@ -109,7 +109,13 @@ async fn setup(on_demand_interval_secs: u64, rng_seed: u64) -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
+    let router = build_router(
+        state,
+        Some(vault_ctx),
+        Some(admin_ctx),
+        Some(replay_store),
+        None,
+    );
 
     // Token signed with the bad key, cnf.jkt also references the bad
     // key — so once the bad key is rotated into the JWKS, the

@@ -103,7 +103,13 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
+    let router = build_router(
+        state,
+        Some(vault_ctx),
+        Some(admin_ctx),
+        Some(replay_store),
+        None,
+    );
 
     // ── Step 2: positive control — a token signed by the ORIGINAL vault
     // key validates successfully against the cached JWKS. ────────────────

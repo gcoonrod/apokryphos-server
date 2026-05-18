@@ -157,3 +157,94 @@ async fn test_admin_happy_path() {
     assert_eq!(obj.len(), 1);
     assert_eq!(obj.get("sub").and_then(Value::as_str), Some(sub));
 }
+
+// ─────────────── Phase 4: cross-phase composition signal ───────────────
+
+const BLOCK_ROUND_TRIP_ID: &str = "ConformanceBlockRoundTrip00000000000000000A";
+
+fn block_req(
+    method: Method,
+    block_id: &str,
+    token: &str,
+    proof: &str,
+    body: Body,
+) -> Request<Body> {
+    use axum::body::HttpBody;
+    let cl = body.size_hint().exact();
+    let mut req = Request::builder()
+        .method(method)
+        .uri(format!("/api/blocks/{block_id}"))
+        .header(header::HOST, HeaderValue::from_static("127.0.0.1"))
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("DPoP {token}")).unwrap(),
+        )
+        .header("dpop", HeaderValue::from_str(proof).unwrap());
+    if let Some(cl) = cl {
+        req = req.header(header::CONTENT_LENGTH, cl.to_string());
+    }
+    req.body(body).unwrap()
+}
+
+#[tokio::test]
+async fn phase4_block_round_trip() {
+    // Drives PUT → GET → DELETE through the assembled router + the
+    // Phase 4 LocalFsProvider, exercising end-to-end composition of the
+    // Phase 3 vault auth layer and the Phase 4 storage layer. SC-001
+    // cross-phase composition signal.
+    let server = TestServer::start_with_local_fs_storage().await;
+    assert_eq!(BLOCK_ROUND_TRIP_ID.len(), 43);
+
+    let token = server.mint_vault_token("conformance-phase4-user");
+    let payload: Vec<u8> = (0..256u32).map(|i| (i & 0xff) as u8).collect();
+    let htu = format!("http://127.0.0.1/api/blocks/{BLOCK_ROUND_TRIP_ID}");
+
+    // PUT
+    let proof = server.mint_dpop_proof(Audience::Vault, &token, "PUT", &htu, "phase4-smoke-put");
+    let resp = server
+        .oneshot(block_req(
+            Method::PUT,
+            BLOCK_ROUND_TRIP_ID,
+            &token,
+            &proof,
+            Body::from(payload.clone()),
+        ))
+        .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "Phase 4 PUT must succeed"
+    );
+
+    // GET — byte-identical payload
+    let proof = server.mint_dpop_proof(Audience::Vault, &token, "GET", &htu, "phase4-smoke-get");
+    let resp = server
+        .oneshot(block_req(
+            Method::GET,
+            BLOCK_ROUND_TRIP_ID,
+            &token,
+            &proof,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        body.as_ref(),
+        payload.as_slice(),
+        "Phase 4 GET must return byte-identical payload"
+    );
+
+    // DELETE
+    let proof = server.mint_dpop_proof(Audience::Vault, &token, "DELETE", &htu, "phase4-smoke-del");
+    let resp = server
+        .oneshot(block_req(
+            Method::DELETE,
+            BLOCK_ROUND_TRIP_ID,
+            &token,
+            &proof,
+            Body::empty(),
+        ))
+        .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}

@@ -1,6 +1,7 @@
 //! Typed, validated configuration entities (data-model.md §1, §2).
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use super::error::ConfigError;
@@ -63,10 +64,19 @@ impl Default for AuthConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageBackend {
+    /// Phase 2 placeholder; constructable only in tests that mock at the
+    /// trait level. Production configuration never resolves to this variant
+    /// once Phase 4 ships.
     None,
-    // S3, LocalFs — reserved for Phase 4. Not constructable in Phase 2.
+
+    /// Phase 4 — local-filesystem backend. The `root` is validated at
+    /// config-load (must be absolute) and re-validated at runtime startup
+    /// (must exist, must be a directory, must accept a probe-write).
+    /// See `storage::init_from_config` and spec FR-007/FR-011.
+    LocalFs { root: PathBuf },
+    // Phase 6: `S3 { bucket, region, endpoint_url, credentials_source }` — reserved.
 }
 
 #[derive(Debug, Clone)]
