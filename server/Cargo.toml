@@ -3,6 +3,14 @@ name = "apokryphos-server"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
+# This binary is the self-hosted API tier of a homelab cypher-block
+# vault; it is not published to crates.io. The repository as a whole
+# is open-source and auditable end-to-end (constitution v1.1.0,
+# §"Public Source Control Policy"). A repo-level LICENSE decision is
+# pending; until that lands, `publish = false` prevents accidental
+# `cargo publish` and lets `cargo-deny` skip the missing-license
+# check on this workspace member via `[licenses] private.ignore`.
+publish = false
 
 [features]
 # Internal test surface (e.g., config::load_from, shutdown::signal_listener_from_channel,

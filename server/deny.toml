@@ -80,6 +80,13 @@ confidence-threshold = 0.93
 # something not in `allow` AND a license that IS in `allow`).
 exceptions = []
 
+[licenses.private]
+# Skip the license-field check on workspace members marked
+# `publish = false` (currently just `apokryphos-server` itself).
+# A repo-level LICENSE decision is pending; until that lands, this
+# keeps cargo-deny from flagging our own binary as "unlicensed".
+ignore = true
+
 # ─────────────────────────── Bans ─────────────────────────────────────────
 
 [bans]
