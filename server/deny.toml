@@ -64,6 +64,12 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # CDLA-Permissive-2.0: Community Data License Agreement Permissive 2.0
+    # — used by `webpki-roots` (Mozilla's bundled CA root certificate
+    # data). Permissive, no copyleft, commercial-use friendly. Mozilla
+    # uses it specifically because the bundled data is a community
+    # dataset rather than code. https://cdla.dev/permissive-2-0/
+    "CDLA-Permissive-2.0",
     "CC0-1.0",
     "ISC",
     "MIT",
