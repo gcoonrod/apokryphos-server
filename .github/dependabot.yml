@@ -1,0 +1,93 @@
+# Dependabot configuration for apokryphos-server.
+#
+# Two ecosystems are tracked:
+#   1. github-actions — action versions referenced in
+#      `.github/workflows/server-ci.yml`. Catches new major versions
+#      of `actions/checkout`, `dorny/paths-filter`,
+#      `Swatinem/rust-cache`, `rustsec/audit-check`, and
+#      `EmbarkStudios/cargo-deny-action`.
+#   2. cargo — Rust dependencies of `server/Cargo.toml`. Cargo
+#      security-advisory updates were already firing without this
+#      file (e.g. PR #5: jsonwebtoken 9.3.1 → 10.3.0); making the
+#      config explicit lets us tune cadence, grouping, and the
+#      jsonwebtoken-version ignore.
+#
+# Weekly Monday cadence reduces PR noise vs. daily. Grouping rules
+# batch the routine minor/patch bumps into a single PR per week per
+# ecosystem so reviewers aren't drowned, while majors stay as their
+# own PRs (they deserve scrutiny — a major action bump can change
+# semantics; a major Cargo bump can break the API).
+#
+# Schema reference:
+#   https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+
+version: 2
+updates:
+
+  # ─────────────────────────── github-actions ────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      # Matches the project's existing conventional-commit style.
+      # Examples: `chore(actions): bump actions/checkout from 6.0.2 to 6.0.3`.
+      prefix: "chore(actions)"
+      include: "scope"
+    groups:
+      # Batch minor + patch bumps into ONE weekly PR. A reviewer can
+      # approve the whole batch in one pass since these are
+      # low-risk. Majors stay individual.
+      action-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ─────────────────────────── cargo (server crate) ──────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      # Patch bumps: batched together (high churn, low risk).
+      cargo-patch:
+        update-types:
+          - "patch"
+      # Minor bumps: also batched but separate from patches so a
+      # reviewer can scrutinize them as a unit. Majors stay solo.
+      cargo-minor:
+        update-types:
+          - "minor"
+    ignore:
+      # jsonwebtoken 10.x split crypto backends; the major bump
+      # compiles clean but PANICS at first signature-verify unless
+      # `default-features = false` + `features = ["rust_crypto"]`
+      # is explicitly chosen. Verified empirically on 2026-05-17
+      # against a real Dependabot PR.
+      #
+      # See `project_jsonwebtoken_10_backend.md` (local memory) for
+      # the full failure mode and the migration steps required if
+      # we ever do bump to 10.x. Until that's done deliberately,
+      # ignoring the major-version bump prevents Dependabot from
+      # repeatedly re-opening the broken PR every time a new 10.x
+      # patch ships.
+      - dependency-name: "jsonwebtoken"
+        update-types:
+          - "version-update:semver-major"
