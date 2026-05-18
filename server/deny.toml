@@ -59,6 +59,10 @@ ignore = [
 # model.
 allow = [
     "0BSD",
+    # AGPL-3.0-or-later: the project's own license (see LICENSE at repo
+    # root). Allowing it here lets cargo-deny accept `apokryphos-server`
+    # itself when the [licenses.private] ignore is removed in the future.
+    "AGPL-3.0-or-later",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
@@ -88,9 +92,12 @@ exceptions = []
 
 [licenses.private]
 # Skip the license-field check on workspace members marked
-# `publish = false` (currently just `apokryphos-server` itself).
-# A repo-level LICENSE decision is pending; until that lands, this
-# keeps cargo-deny from flagging our own binary as "unlicensed".
+# `publish = false`. The current `apokryphos-server` crate has a
+# proper `license = "AGPL-3.0-or-later"` field so this is no longer
+# load-bearing for it, but the rule remains as a forward-looking
+# default: any internal binary added to the workspace can use
+# `publish = false` without immediately needing a per-crate license
+# field (the repo-level LICENSE at root governs).
 ignore = true
 
 # ─────────────────────────── Bans ─────────────────────────────────────────

@@ -3,13 +3,17 @@ name = "apokryphos-server"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
+license = "AGPL-3.0-or-later"
 # This binary is the self-hosted API tier of a homelab cypher-block
-# vault; it is not published to crates.io. The repository as a whole
-# is open-source and auditable end-to-end (constitution v1.1.0,
-# §"Public Source Control Policy"). A repo-level LICENSE decision is
-# pending; until that lands, `publish = false` prevents accidental
-# `cargo publish` and lets `cargo-deny` skip the missing-license
-# check on this workspace member via `[licenses] private.ignore`.
+# vault. The repository as a whole is open-source and auditable
+# end-to-end under AGPL-3.0-or-later (see `LICENSE` at repo root);
+# the AGPL's network-use clause is intentional for a self-hosted
+# blind-server design (anyone running a modified server tier MUST
+# publish their modifications, even when access is over a network).
+#
+# `publish = false` because this is a binary crate; it's never
+# uploaded to crates.io. It would still build and link fine if
+# someone tried, but `publish = false` prevents accidental upload.
 publish = false
 
 [features]
