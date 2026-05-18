@@ -138,7 +138,10 @@ pub async fn run() -> Result<(), AppError> {
 
     let listener = TcpListener::bind(bind_addr)
         .await
-        .map_err(|source| AppError::Bind { addr: bind_addr, source })?;
+        .map_err(|source| AppError::Bind {
+            addr: bind_addr,
+            source,
+        })?;
     let local_addr = listener.local_addr().map_err(|source| AppError::Bind {
         addr: bind_addr,
         source,
@@ -159,26 +162,22 @@ pub async fn run() -> Result<(), AppError> {
     // because the watch already prompts a clean break, and a task
     // that misses the watch wakeup is still cancelled when the runtime
     // shuts down.
-    let _vault_jwks_task =
-        tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
-            Arc::clone(&vault_ctx),
-            shutdown_rx.clone(),
-        ));
-    let _admin_jwks_task =
-        tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
-            Arc::clone(&admin_ctx),
-            shutdown_rx.clone(),
-        ));
-    let _vault_discovery_task =
-        tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
-            Arc::clone(&vault_ctx),
-            shutdown_rx.clone(),
-        ));
-    let _admin_discovery_task =
-        tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
-            Arc::clone(&admin_ctx),
-            shutdown_rx.clone(),
-        ));
+    let _vault_jwks_task = tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
+        Arc::clone(&vault_ctx),
+        shutdown_rx.clone(),
+    ));
+    let _admin_jwks_task = tokio::spawn(crate::auth::jwks::scheduled_refresh_task(
+        Arc::clone(&admin_ctx),
+        shutdown_rx.clone(),
+    ));
+    let _vault_discovery_task = tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
+        Arc::clone(&vault_ctx),
+        shutdown_rx.clone(),
+    ));
+    let _admin_discovery_task = tokio::spawn(crate::auth::discovery::scheduled_refresh_task(
+        Arc::clone(&admin_ctx),
+        shutdown_rx.clone(),
+    ));
     let _replay_cleanup_task = tokio::spawn(crate::auth::replay::cleanup_task(
         Arc::clone(&replay_store),
         shutdown_rx,

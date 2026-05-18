@@ -93,7 +93,9 @@ impl AuthFailure {
 /// Headers (FR-029):
 ///   - `WWW-Authenticate: DPoP algs="PS256 ES256"` (fixed value)
 ///   - `Content-Length: 0`
+///
 /// Body: empty.
+///
 /// Forbidden: `Content-Type`, `Retry-After`, any error-detail header.
 pub fn respond_401() -> Response<Body> {
     Response::builder()
@@ -117,9 +119,14 @@ pub fn respond_401() -> Response<Body> {
 /// these out by running at `--log-level WARN` or higher; the events
 /// remain useful at the default `INFO` level (which suppresses DEBUG)
 /// only for active troubleshooting.
-pub(in crate::auth) fn log_failure(failure: &AuthFailure, effective_address: IpAddr) {
+pub(in crate::auth) fn log_failure(
+    failure: &AuthFailure,
+    effective_address: IpAddr,
+    audience: &'static str,
+) {
     tracing::debug!(
         category = failure.category(),
+        audience = audience,
         client = %effective_address,
         "auth.failure"
     );
@@ -158,10 +165,7 @@ mod tests {
                 .unwrap(),
             r#"DPoP algs="PS256 ES256""#
         );
-        assert_eq!(
-            response.headers().get(header::CONTENT_LENGTH).unwrap(),
-            "0"
-        );
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
         assert!(response.headers().get(header::CONTENT_TYPE).is_none());
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert!(body.is_empty());
@@ -189,10 +193,7 @@ mod tests {
     async fn respond_503_memory_pressure_has_fixed_shape() {
         let response = respond_503_memory_pressure();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            response.headers().get(header::CONTENT_LENGTH).unwrap(),
-            "0"
-        );
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
         assert!(response.headers().get(header::CONTENT_TYPE).is_none());
         assert!(response.headers().get("retry-after").is_none());
     }
@@ -227,6 +228,10 @@ mod tests {
         let mut sorted = categories.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(categories.len(), sorted.len(), "duplicate category strings: {categories:?}");
+        assert_eq!(
+            categories.len(),
+            sorted.len(),
+            "duplicate category strings: {categories:?}"
+        );
     }
 }

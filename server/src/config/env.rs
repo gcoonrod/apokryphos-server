@@ -112,9 +112,15 @@ pub fn collect_env(env: &BTreeMap<String, String>) -> PartialConfig {
     let mut any_auth_field = false;
     for (env_key, target) in [
         ("APOK_AUTH_CLOCK_SKEW_SECS", &mut auth.clock_skew_secs),
-        ("APOK_AUTH_DPOP_FRESHNESS_SECS", &mut auth.dpop_freshness_secs),
+        (
+            "APOK_AUTH_DPOP_FRESHNESS_SECS",
+            &mut auth.dpop_freshness_secs,
+        ),
         ("APOK_AUTH_JWKS_REFRESH_SECS", &mut auth.jwks_refresh_secs),
-        ("APOK_AUTH_DISCOVERY_REFRESH_SECS", &mut auth.discovery_refresh_secs),
+        (
+            "APOK_AUTH_DISCOVERY_REFRESH_SECS",
+            &mut auth.discovery_refresh_secs,
+        ),
         (
             "APOK_AUTH_ON_DEMAND_REFRESH_MIN_INTERVAL_SECS",
             &mut auth.on_demand_refresh_min_interval_secs,

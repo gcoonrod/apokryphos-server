@@ -19,6 +19,7 @@
 //! only `authenticate_common`). Each #[tokio::test] below drives one
 //! of those arms end-to-end so both are exercised.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;
@@ -101,14 +102,9 @@ async fn drive_memory_pressure_scenario(s: Scenario) {
         audience: s.audience_str.to_string(),
     };
     let http_client = openidconnect::reqwest::Client::new();
-    let ctx = init_single_context(
-        s.audience,
-        &oidc_cfg,
-        Arc::clone(&auth_cfg),
-        &http_client,
-    )
-    .await
-    .expect("init_single_context against MockOidcProvider must succeed");
+    let ctx = init_single_context(s.audience, &oidc_cfg, Arc::clone(&auth_cfg), &http_client)
+        .await
+        .expect("init_single_context against MockOidcProvider must succeed");
 
     let replay_store = Arc::new(JtiReplayStore::new(Arc::clone(&auth_cfg)));
 
@@ -136,12 +132,7 @@ async fn drive_memory_pressure_scenario(s: Scenario) {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(
-        state,
-        vault_ctx,
-        admin_ctx,
-        Some(Arc::clone(&replay_store)),
-    );
+    let router = build_router(state, vault_ctx, admin_ctx, Some(Arc::clone(&replay_store)));
 
     // ── Mint a fully valid token + DPoP proof with a fresh jti. ─────────
     let cnf_jkt = es256_thumbprint_b64url(signing_key.verifying_key());

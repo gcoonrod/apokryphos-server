@@ -29,16 +29,14 @@ mod common;
 use std::sync::Arc;
 
 use apokryphos_server::AppState;
+use apokryphos_server::auth::JtiReplayStore;
 use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::auth::JtiReplayStore;
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
@@ -107,12 +105,7 @@ async fn setup_fixture() -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(
-        state,
-        Some(vault_ctx),
-        Some(admin_ctx),
-        Some(replay_store),
-    );
+    let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
 
     Fixture {
         router,
@@ -224,7 +217,10 @@ async fn cross_audience_attempts_byte_identical_401() {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("DPoP {}", admin_token)).unwrap(),
         )
-        .header("dpop", HeaderValue::from_str(&admin_proof_at_vault).unwrap())
+        .header(
+            "dpop",
+            HeaderValue::from_str(&admin_proof_at_vault).unwrap(),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -252,7 +248,10 @@ async fn cross_audience_attempts_byte_identical_401() {
             header::AUTHORIZATION,
             HeaderValue::from_str(&format!("DPoP {}", vault_token)).unwrap(),
         )
-        .header("dpop", HeaderValue::from_str(&vault_proof_at_admin).unwrap())
+        .header(
+            "dpop",
+            HeaderValue::from_str(&vault_proof_at_admin).unwrap(),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -277,7 +276,13 @@ async fn cross_audience_attempts_byte_identical_401() {
     assert_eq!(img_a.status, StatusCode::UNAUTHORIZED, "(a) must be 401");
     // SC-002: every cross-audience or no-auth attempt yields the same
     // wire image. Pairwise equality is sufficient.
-    assert_eq!(img_a, img_b, "vault no-auth vs admin-token-at-vault diverged");
-    assert_eq!(img_a, img_c, "vault no-auth vs vault-token-at-admin diverged");
+    assert_eq!(
+        img_a, img_b,
+        "vault no-auth vs admin-token-at-vault diverged"
+    );
+    assert_eq!(
+        img_a, img_c,
+        "vault no-auth vs vault-token-at-admin diverged"
+    );
     assert_eq!(img_a, img_d, "vault no-auth vs admin no-auth diverged");
 }

@@ -164,8 +164,7 @@ mod tests {
 
         let mut req: Request<()> = Request::builder().body(()).unwrap();
         let inserted = VaultSubject::new("u-1");
-        req.extensions_mut()
-            .insert(VaultSubjectExtension(inserted));
+        req.extensions_mut().insert(VaultSubjectExtension(inserted));
         let (mut parts, _body) = req.into_parts();
         let extracted = VaultSubject::from_request_parts(&mut parts, &())
             .await

@@ -14,11 +14,9 @@ const MIN_REPLAY_ENTRIES: usize = 1024;
 
 pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
     let bind_address = parse_bind_address(p.bind_address)?;
-    let block_size_bytes = parse_positive_u64(
-        "APOK_BLOCK_SIZE_BYTES",
-        p.block_size_bytes,
-        |v| ConfigError::InvalidBlockSize { value: v },
-    )?
+    let block_size_bytes = parse_positive_u64("APOK_BLOCK_SIZE_BYTES", p.block_size_bytes, |v| {
+        ConfigError::InvalidBlockSize { value: v }
+    })?
     .ok_or(ConfigError::Missing {
         key: "block_size_bytes",
     })?;
@@ -54,7 +52,9 @@ pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
 /// before the cross-field invariant.
 fn parse_auth(partial: Option<PartialAuth>) -> Result<AuthConfig, ConfigError> {
     let defaults = AuthConfig::default();
-    let Some(p) = partial else { return Ok(defaults) };
+    let Some(p) = partial else {
+        return Ok(defaults);
+    };
 
     let clock_skew_secs = parse_auth_positive_u64("clock_skew_secs", p.clock_skew_secs)?
         .unwrap_or(defaults.clock_skew_secs);
@@ -88,8 +88,8 @@ fn parse_auth(partial: Option<PartialAuth>) -> Result<AuthConfig, ConfigError> {
     let jti_replay_window_secs =
         parse_auth_positive_u64("jti_replay_window_secs", p.jti_replay_window_secs)?
             .unwrap_or(required);
-    let max_replay_entries = parse_max_replay_entries(p.max_replay_entries)?
-        .unwrap_or(defaults.max_replay_entries);
+    let max_replay_entries =
+        parse_max_replay_entries(p.max_replay_entries)?.unwrap_or(defaults.max_replay_entries);
 
     if jti_replay_window_secs < required {
         return Err(ConfigError::AuthReplayWindowTooSmall {
@@ -146,17 +146,19 @@ fn parse_max_replay_entries(value: Option<toml::Value>) -> Result<Option<usize>,
     // 0 as usize, causing the replay store to reject every insert as
     // memory pressure. Use a checked conversion so misconfiguration
     // becomes a typed ConfigError instead.
-    let as_usize = usize::try_from(parsed).map_err(|_| {
-        ConfigError::InvalidAuthMaxReplayEntries {
+    let as_usize =
+        usize::try_from(parsed).map_err(|_| ConfigError::InvalidAuthMaxReplayEntries {
             value: parsed.to_string(),
-        }
-    })?;
+        })?;
     Ok(Some(as_usize))
 }
 
 fn parse_bind_address(value: Option<String>) -> Result<SocketAddr, ConfigError> {
-    let v = value.ok_or(ConfigError::Missing { key: "bind_address" })?;
-    v.parse::<SocketAddr>().map_err(|source| ConfigError::InvalidBindAddress { value: v, source })
+    let v = value.ok_or(ConfigError::Missing {
+        key: "bind_address",
+    })?;
+    v.parse::<SocketAddr>()
+        .map_err(|source| ConfigError::InvalidBindAddress { value: v, source })
 }
 
 /// Parse a TOML scalar (integer or string) as a positive `u64`. Returns `None`
@@ -190,11 +192,17 @@ fn parse_storage_backend(value: Option<String>) -> Result<StorageBackend, Config
     }
 }
 
-fn parse_trusted_proxies(value: Option<TrustedProxiesSource>) -> Result<Vec<ipnet::IpNet>, ConfigError> {
+fn parse_trusted_proxies(
+    value: Option<TrustedProxiesSource>,
+) -> Result<Vec<ipnet::IpNet>, ConfigError> {
     let entries: Vec<String> = match value {
         // The key must be present (FR-006) — but both an empty array and an
         // empty CSV are valid empty lists per R14/C8.
-        None => return Err(ConfigError::Missing { key: "trusted_proxies" }),
+        None => {
+            return Err(ConfigError::Missing {
+                key: "trusted_proxies",
+            });
+        }
         Some(TrustedProxiesSource::List(v)) => v,
         Some(TrustedProxiesSource::Csv(s)) if s.is_empty() => Vec::new(),
         Some(TrustedProxiesSource::Csv(s)) => s.split(',').map(|e| e.trim().to_string()).collect(),
@@ -209,22 +217,22 @@ fn parse_trusted_proxies(value: Option<TrustedProxiesSource>) -> Result<Vec<ipne
                 source: "".parse::<ipnet::IpNet>().unwrap_err(),
             });
         }
-        let net = entry.parse::<ipnet::IpNet>().map_err(|source| ConfigError::InvalidCidr {
-            entry: entry.clone(),
-            position,
-            source,
-        })?;
+        let net = entry
+            .parse::<ipnet::IpNet>()
+            .map_err(|source| ConfigError::InvalidCidr {
+                entry: entry.clone(),
+                position,
+                source,
+            })?;
         nets.push(net);
     }
     Ok(nets)
 }
 
 fn parse_drain_timeout(value: Option<toml::Value>) -> Result<Duration, ConfigError> {
-    let secs = parse_positive_u64(
-        "APOK_DRAIN_TIMEOUT_SECS",
-        value,
-        |v| ConfigError::InvalidDrainTimeout { value: v },
-    )?
+    let secs = parse_positive_u64("APOK_DRAIN_TIMEOUT_SECS", value, |v| {
+        ConfigError::InvalidDrainTimeout { value: v }
+    })?
     .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS);
     Ok(Duration::from_secs(secs))
 }

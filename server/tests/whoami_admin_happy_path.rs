@@ -131,7 +131,11 @@ async fn whoami_admin_happy_path_returns_200_with_sub() {
     let body_json: Value = serde_json::from_str(&body_text)
         .unwrap_or_else(|_| panic!("body is not valid JSON: status={status} body={body_text:?}"));
 
-    assert_eq!(status, StatusCode::OK, "expected 200 OK; body was {body_text:?}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 OK; body was {body_text:?}"
+    );
     assert_eq!(
         content_type.as_deref(),
         Some("application/json"),

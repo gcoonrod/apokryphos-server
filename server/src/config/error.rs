@@ -38,14 +38,18 @@ pub enum ConfigError {
         source: url::ParseError,
     },
 
-    #[error("{audience}_oidc.issuer_url {value:?} must use scheme \"https\" per OIDC Discovery 1.0, got {scheme:?}")]
+    #[error(
+        "{audience}_oidc.issuer_url {value:?} must use scheme \"https\" per OIDC Discovery 1.0, got {scheme:?}"
+    )]
     InvalidIssuerUrlScheme {
         audience: &'static str,
         value: String,
         scheme: String,
     },
 
-    #[error("{audience}_oidc.issuer_url {value:?} must not include a {component} component per OIDC Discovery 1.0")]
+    #[error(
+        "{audience}_oidc.issuer_url {value:?} must not include a {component} component per OIDC Discovery 1.0"
+    )]
     IssuerUrlHasComponent {
         audience: &'static str,
         value: String,
@@ -62,10 +66,7 @@ pub enum ConfigError {
     InvalidDrainTimeout { value: String },
 
     #[error("auth.{key} must be a positive integer, got {value:?}")]
-    InvalidAuthDurationSecs {
-        key: &'static str,
-        value: String,
-    },
+    InvalidAuthDurationSecs { key: &'static str, value: String },
 
     #[error("auth.max_replay_entries must be an integer >= 1024, got {value:?}")]
     InvalidAuthMaxReplayEntries { value: String },

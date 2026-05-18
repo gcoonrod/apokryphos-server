@@ -89,11 +89,12 @@ impl OidcAudienceConfig {
         issuer_url: String,
         audience: String,
     ) -> Result<Self, ConfigError> {
-        let parsed = url::Url::parse(&issuer_url).map_err(|source| ConfigError::InvalidIssuerUrl {
-            audience: audience_name,
-            value: issuer_url.clone(),
-            source,
-        })?;
+        let parsed =
+            url::Url::parse(&issuer_url).map_err(|source| ConfigError::InvalidIssuerUrl {
+                audience: audience_name,
+                value: issuer_url.clone(),
+                source,
+            })?;
         if parsed.scheme() != "https" {
             return Err(ConfigError::InvalidIssuerUrlScheme {
                 audience: audience_name,

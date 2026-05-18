@@ -24,22 +24,21 @@
 //!      window elapses, a fresh request triggers a second on-demand
 //!      fetch that installs the rotated JWKS and the retry succeeds.
 
+#![allow(clippy::field_reassign_with_default)]
 mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use apokryphos_server::AppState;
+use apokryphos_server::auth::JtiReplayStore;
 use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::auth::JtiReplayStore;
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
@@ -110,12 +109,7 @@ async fn setup(on_demand_interval_secs: u64, rng_seed: u64) -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(
-        state,
-        Some(vault_ctx),
-        Some(admin_ctx),
-        Some(replay_store),
-    );
+    let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
 
     // Token signed with the bad key, cnf.jkt also references the bad
     // key — so once the bad key is rotated into the JWKS, the

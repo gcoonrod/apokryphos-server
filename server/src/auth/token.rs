@@ -25,8 +25,6 @@
 //! once at validation time so the per-request DPoP `jkt` comparison
 //! (FR-022, in `auth::dpop`) can use `ct_eq_32` against the raw bytes.
 
-use std::time::SystemTime;
-
 use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
@@ -40,7 +38,14 @@ use crate::auth::jwks::JwsAlg;
 /// `validate_token`. Fields are `pub(crate)` so handlers can read `sub` /
 /// `cnf_jkt` after the middleware completes; outside the crate, the
 /// `VaultSubject` / `AdminSubject` wrappers are the only exposed handles.
+///
+/// Fields `aud`, `iss`, `exp`, `iat`, `nbf` are stored for completeness
+/// and audit-log use in subsequent phases. They are validated inline
+/// during `validate_token` (not field-read afterwards), so dead-code
+/// analysis flags them; keep them as documented surface area rather than
+/// shrinking the type and re-adding fields when audit logging arrives.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AccessToken {
     pub(crate) sub: String,
     pub(crate) aud: String,
@@ -71,8 +76,8 @@ impl AccessToken {
 struct TokenClaims {
     sub: Option<String>,
     /// `aud` may be a string or array of strings in the JWT spec; FAPI 2.0
-    /// + the FR-013 single-audience rule means we treat any array form as
-    /// invalid. The middleware compares this string verbatim against
+    /// plus the FR-013 single-audience rule means we treat any array form
+    /// as invalid. The middleware compares this string verbatim against
     /// the context's configured audience via constant-time equality.
     #[serde(default)]
     aud: Option<AudienceField>,
@@ -86,11 +91,13 @@ struct TokenClaims {
 
 /// Single-string audience only. The serde-untagged variant lets us accept
 /// the most common provider form (`"aud": "value"`) and reject the array
-/// form structurally.
+/// form structurally. `Multiple`'s payload is unread by design — matching
+/// the variant is the rejection signal; the array contents are discarded.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum AudienceField {
     Single(String),
+    #[allow(dead_code)]
     Multiple(Vec<String>),
 }
 
@@ -226,10 +233,10 @@ pub(crate) async fn validate_token(
     if exp.saturating_add(skew) <= now_secs {
         return Err(AuthFailure::TokenExpired);
     }
-    if let Some(nbf) = data.claims.nbf {
-        if nbf > now_secs.saturating_add(skew) {
-            return Err(AuthFailure::TokenNotYetValid);
-        }
+    if let Some(nbf) = data.claims.nbf
+        && nbf > now_secs.saturating_add(skew)
+    {
+        return Err(AuthFailure::TokenNotYetValid);
     }
 
     // ── Parse cnf.jkt to raw 32 bytes for FR-022 (DPoP-side). ──────────

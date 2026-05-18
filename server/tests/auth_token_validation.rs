@@ -12,6 +12,7 @@ mod common;
 
 use std::sync::Arc;
 
+use apokryphos_server::AppState;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
@@ -20,7 +21,6 @@ use apokryphos_server::auth::testing::{
 use apokryphos_server::auth::{AudienceTag, JtiReplayStore, init_single_context};
 use apokryphos_server::config::{AuthConfig, OidcAudienceConfig};
 use apokryphos_server::routes::build_router;
-use apokryphos_server::AppState;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -100,11 +100,7 @@ fn mint_proof(fixture: &Fixture, token: &str, jti: &str) -> String {
     )
 }
 
-async fn drive(
-    router: &axum::Router,
-    token: &str,
-    proof: &str,
-) -> StatusCode {
+async fn drive(router: &axum::Router, token: &str, proof: &str) -> StatusCode {
     let request = Request::builder()
         .method(Method::GET)
         .uri("/api/whoami")
@@ -116,12 +112,7 @@ async fn drive(
         .header("dpop", HeaderValue::from_str(proof).unwrap())
         .body(Body::empty())
         .unwrap();
-    router
-        .clone()
-        .oneshot(request)
-        .await
-        .unwrap()
-        .status()
+    router.clone().oneshot(request).await.unwrap().status()
 }
 
 // ─────────────── Positive controls (G1 + happy path) ────────────────────
@@ -247,9 +238,7 @@ async fn negative_disallowed_alg_rs256_rejected() {
     let mut rng = deterministic_rng(10);
     let rsa_key = apokryphos_server::auth::testing::generate_ps256_keypair(&mut rng);
     use rsa::pkcs8::EncodePrivateKey;
-    let pem = rsa_key
-        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
-        .unwrap();
+    let pem = rsa_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap();
     let encoding_key = EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(TEST_KID.to_string());

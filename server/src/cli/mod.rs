@@ -110,10 +110,19 @@ mod tests {
         // SC-013(c) requires the rejection diagnostic to name the offending
         // value AND list the permitted set. clap's default `InvalidValue`
         // diagnostic does both.
-        assert!(rendered.contains("VERBOSE"), "diagnostic must name offending value: {rendered}");
+        assert!(
+            rendered.contains("VERBOSE"),
+            "diagnostic must name offending value: {rendered}"
+        );
         // The diagnostic lists permitted values via clap's "possible values"
         // line — spot-check a couple.
-        assert!(rendered.contains("TRACE"), "diagnostic must list permitted set: {rendered}");
-        assert!(rendered.contains("INFO"), "diagnostic must list permitted set: {rendered}");
+        assert!(
+            rendered.contains("TRACE"),
+            "diagnostic must list permitted set: {rendered}"
+        );
+        assert!(
+            rendered.contains("INFO"),
+            "diagnostic must list permitted set: {rendered}"
+        );
     }
 }

@@ -88,11 +88,10 @@ pub async fn fetch_discovery(
         issuer_url.as_str().trim_end_matches('/'),
         DISCOVERY_SUFFIX
     );
-    let discovery_url =
-        Url::parse(&raw).map_err(|source| DiscoveryFetchError::UrlBuild {
-            issuer: issuer_url.to_string(),
-            source,
-        })?;
+    let discovery_url = Url::parse(&raw).map_err(|source| DiscoveryFetchError::UrlBuild {
+        issuer: issuer_url.to_string(),
+        source,
+    })?;
 
     let response = http_client.get(discovery_url).send().await?;
     let status = response.status();

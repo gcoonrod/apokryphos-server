@@ -8,10 +8,10 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use apokryphos_server::serve_with_shutdown;
 use apokryphos_server::AppState;
-use axum::routing::get;
+use apokryphos_server::serve_with_shutdown;
 use axum::Router;
+use axum::routing::get;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -19,7 +19,9 @@ use tokio::sync::oneshot;
 use crate::common::minimal_valid_config;
 
 async fn bind_ephemeral() -> TcpListener {
-    TcpListener::bind("127.0.0.1:0").await.expect("ephemeral bind")
+    TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("ephemeral bind")
 }
 
 #[allow(dead_code)]
@@ -101,8 +103,12 @@ async fn drain_timeout_exceeded_returns_ok_with_drained_cleanly_false() {
     };
 
     // (1) Start the server in a task.
-    let server_handle =
-        tokio::spawn(serve_with_shutdown(listener, router, shutdown_fut, drain_timeout));
+    let server_handle = tokio::spawn(serve_with_shutdown(
+        listener,
+        router,
+        shutdown_fut,
+        drain_timeout,
+    ));
 
     // (2) Connect with retry so we don't race the bind, then write the request.
     let client_handle = tokio::spawn(async move {
@@ -169,8 +175,7 @@ async fn signal_before_traffic_exits_cleanly() {
     tx.send(()).unwrap();
 
     let start = std::time::Instant::now();
-    let result =
-        serve_with_shutdown(listener, router, shutdown_fut, Duration::from_secs(5)).await;
+    let result = serve_with_shutdown(listener, router, shutdown_fut, Duration::from_secs(5)).await;
     let elapsed = start.elapsed();
 
     assert!(result.is_ok());

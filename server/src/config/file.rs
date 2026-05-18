@@ -25,6 +25,7 @@ pub fn load_optional_file(path: Option<&str>) -> Result<PartialConfig, ConfigErr
         path: path.to_path_buf(),
         source,
     })?;
-    let parsed: PartialConfig = toml::from_str(&content).map_err(|e| ConfigError::TomlParse { source: e })?;
+    let parsed: PartialConfig =
+        toml::from_str(&content).map_err(|e| ConfigError::TomlParse { source: e })?;
     Ok(parsed)
 }

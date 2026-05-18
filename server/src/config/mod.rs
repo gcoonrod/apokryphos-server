@@ -52,7 +52,9 @@ fn collect_apok_env() -> Result<std::collections::BTreeMap<String, String>, Conf
         }
         let value = val_os
             .into_string()
-            .map_err(|_| ConfigError::NonUnicodeEnv { key: key.to_string() })?;
+            .map_err(|_| ConfigError::NonUnicodeEnv {
+                key: key.to_string(),
+            })?;
         map.insert(key.to_string(), value);
     }
     Ok(map)

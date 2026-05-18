@@ -5,8 +5,8 @@ mod common;
 
 use std::sync::Arc;
 
-use apokryphos_server::routes::build_router;
 use apokryphos_server::AppState;
+use apokryphos_server::routes::build_router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
@@ -35,11 +35,15 @@ async fn get_health_returns_200_and_constant_body() {
     let res = router().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(
-        res.headers().get("content-type").map(|v| v.to_str().unwrap()),
+        res.headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap()),
         Some("application/json")
     );
 
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(&body[..], br#"{"alive":true}"#);
     // Plan docs say "15 bytes" but the literal is 14 chars; this is a
     // documentation off-by-one. Body bytes are constant either way.
@@ -56,7 +60,9 @@ async fn body_contains_no_configured_values() {
         .body(Body::empty())
         .unwrap();
     let res = router().oneshot(req).await.unwrap();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let text = std::str::from_utf8(&body).unwrap();
 
     for needle in [
@@ -76,7 +82,13 @@ async fn body_contains_no_configured_values() {
 /// T042: Clarify-Q1 — non-GET on /health is 404, NOT 405. No `Allow` header.
 #[tokio::test]
 async fn non_get_health_returns_404_not_405_no_allow_header() {
-    for method in [Method::POST, Method::HEAD, Method::OPTIONS, Method::DELETE, Method::PUT] {
+    for method in [
+        Method::POST,
+        Method::HEAD,
+        Method::OPTIONS,
+        Method::DELETE,
+        Method::PUT,
+    ] {
         let req = Request::builder()
             .method(method.clone())
             .uri("/health")
@@ -92,7 +104,9 @@ async fn non_get_health_returns_404_not_405_no_allow_header() {
             res.headers().get("allow").is_none(),
             "{method} /health must not emit Allow header (Clarify-Q1)"
         );
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(body.is_empty(), "{method} /health body must be empty");
     }
 }
@@ -120,8 +134,12 @@ async fn unknown_path_and_method_mismatch_are_indistinguishable() {
     let names_b: Vec<_> = res_b.headers().keys().collect();
     assert_eq!(names_a, names_b, "404 header sets must match");
 
-    let body_a = axum::body::to_bytes(res_a.into_body(), usize::MAX).await.unwrap();
-    let body_b = axum::body::to_bytes(res_b.into_body(), usize::MAX).await.unwrap();
+    let body_a = axum::body::to_bytes(res_a.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_b = axum::body::to_bytes(res_b.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body_a, body_b, "404 bodies must be byte-identical");
 }
 
@@ -134,7 +152,13 @@ async fn no_diagnostic_headers_in_404() {
         .body(Body::empty())
         .unwrap();
     let res = router().oneshot(req).await.unwrap();
-    for header in ["server", "x-version", "x-powered-by", "x-build", "x-request-id"] {
+    for header in [
+        "server",
+        "x-version",
+        "x-powered-by",
+        "x-build",
+        "x-request-id",
+    ] {
         assert!(
             res.headers().get(header).is_none(),
             "diagnostic header {header} should not be present"

@@ -25,9 +25,7 @@ use apokryphos_server::auth::testing::{
     MockOidcProvider, deterministic_rng, es256_public_jwk, es256_thumbprint_b64url,
     generate_es256_keypair,
 };
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use openidconnect::reqwest;
 use serde_json::{Value, json};
 
@@ -65,9 +63,7 @@ async fn init_contexts_rejects_jwks_overlap_at_startup() {
         ContextInitError::JwksOverlap {
             context_with_extra_key: AudienceTag::Admin,
         } => {}
-        other => panic!(
-            "expected ContextInitError::JwksOverlap {{ Admin }}, got: {other}"
-        ),
+        other => panic!("expected ContextInitError::JwksOverlap {{ Admin }}, got: {other}"),
     }
 
     // Constitution Principle IV: diagnostic MUST NOT leak any byte of the
@@ -122,4 +118,3 @@ fn make_config(vault_issuer: url::Url, admin_issuer: url::Url) -> ServerConfig {
         auth: AuthConfig::default(),
     }
 }
-

@@ -4,32 +4,32 @@
 //! `validate_proof` is the *only* constructor of `DpopProof`. It runs the
 //! validation pipeline in exactly the order FR-017..FR-023 specifies:
 //!
-//!   1. **FR-010a alg allowlist (FIRST gate)** — pre-decode the JOSE
-//!      header; reject any `alg ∉ {PS256, ES256}` before signature work.
-//!   1b. **RFC 9449 §4.2 `typ` header** — reject any proof whose JOSE
-//!       `typ` is not exactly `"dpop+jwt"`.
-//!   2. **FR-017 signature verify** — verify the JWS against the public
-//!      key embedded in the proof's own `jwk` JOSE header parameter
-//!      (RFC 9449 §4.2).
-//!   3. **FR-018 `htm` match** — constant-time string equality with the
-//!      request's HTTP method.
-//!   4. **FR-019 `htu` match** — normalize per R10 (lower-case scheme +
-//!      host, strip fragment, elide default ports), then constant-time
-//!      compare component-wise against the effective request URI.
-//!   5. **FR-020 `iat` freshness** — `now - iat <= dpop_freshness_secs +
-//!      clock_skew_secs`; forward-skew also bounded by the skew tolerance.
-//!   6. **FR-022 `jkt` ↔ `cnf.jkt` match** — compute RFC 7638 thumbprint
-//!      of the proof's embedded `jwk`; constant-time compare against the
-//!      access token's `cnf.jkt` field.
-//!   6b. **FR-022a `ath` ↔ access-token-hash match** — compute base64url
-//!       SHA-256 of the trimmed bearer-token bytes; constant-time compare
-//!       against the proof's `ath` claim. Runs AFTER signature verify
-//!       (so a forged proof rejecting at the sig step cannot leak
-//!       access-token-hash material via timing) and BEFORE replay insert
-//!       (so a substitution attempt cannot consume a `jti` slot).
-//!   7. **FR-021 replay check** — atomic insert of `(audience_tag,
-//!      sha256(jti))` into the replay store; `Replayed` → 401,
-//!      `MemoryPressure` → 503.
+//! 1. **FR-010a alg allowlist (FIRST gate)** — pre-decode the JOSE
+//!    header; reject any `alg ∉ {PS256, ES256}` before signature work.
+//! 2. **RFC 9449 §4.2 `typ` header** — reject any proof whose JOSE
+//!    `typ` is not exactly `"dpop+jwt"`.
+//! 3. **FR-017 signature verify** — verify the JWS against the public
+//!    key embedded in the proof's own `jwk` JOSE header parameter
+//!    (RFC 9449 §4.2).
+//! 4. **FR-018 `htm` match** — constant-time string equality with the
+//!    request's HTTP method.
+//! 5. **FR-019 `htu` match** — normalize per R10 (lower-case scheme +
+//!    host, strip fragment, elide default ports), then constant-time
+//!    compare component-wise against the effective request URI.
+//! 6. **FR-020 `iat` freshness** — `now - iat <= dpop_freshness_secs +
+//!    clock_skew_secs`; forward-skew also bounded by the skew tolerance.
+//! 7. **FR-022 `jkt` ↔ `cnf.jkt` match** — compute RFC 7638 thumbprint
+//!    of the proof's embedded `jwk`; constant-time compare against the
+//!    access token's `cnf.jkt` field.
+//! 8. **FR-022a `ath` ↔ access-token-hash match** — compute base64url
+//!    SHA-256 of the trimmed bearer-token bytes; constant-time compare
+//!    against the proof's `ath` claim. Runs AFTER signature verify
+//!    (so a forged proof rejecting at the sig step cannot leak
+//!    access-token-hash material via timing) and BEFORE replay insert
+//!    (so a substitution attempt cannot consume a `jti` slot).
+//! 9. **FR-021 replay check** — atomic insert of `(audience_tag,
+//!    sha256(jti))` into the replay store; `Replayed` → 401,
+//!    `MemoryPressure` → 503.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // SystemTime is still used for the iat-freshness check (Step 5); the
@@ -144,8 +144,8 @@ pub(crate) async fn validate_proof(
 
     // ── Step 2: FR-017 signature verify against the embedded jwk. ──────
     let embedded_jwk = header.jwk.ok_or(AuthFailure::ProofSignatureInvalid)?;
-    let decoding_key = DecodingKey::from_jwk(&embedded_jwk)
-        .map_err(|_| AuthFailure::ProofSignatureInvalid)?;
+    let decoding_key =
+        DecodingKey::from_jwk(&embedded_jwk).map_err(|_| AuthFailure::ProofSignatureInvalid)?;
 
     let mut validation = Validation::new(alg.to_jwt_algorithm());
     // DPoP proofs have no aud/iss/exp; jsonwebtoken's `Validation` would
@@ -294,9 +294,10 @@ fn urls_equivalent_ct(a: &Url, b: &Url) -> bool {
     // be present on either side, reject the proof outright if either
     // URL has userinfo. `Url::username()` returns an empty string when
     // none is set; `Url::password()` returns None.
-    let no_userinfo =
-        a.username().is_empty() && a.password().is_none()
-            && b.username().is_empty() && b.password().is_none();
+    let no_userinfo = a.username().is_empty()
+        && a.password().is_none()
+        && b.username().is_empty()
+        && b.password().is_none();
     scheme_eq && host_eq && port_eq && path_eq && query_eq && no_userinfo
 }
 
