@@ -245,10 +245,14 @@ async fn vault_failure_logs_redact_token_proof_jti() {
         logs.contains("auth.token.bad_signature"),
         "FR-033: the failure category must be present in the log. logs={logs}",
     );
+    // Match the exact `tracing_subscriber::fmt` shape for a `&'static str`
+    // field: `audience="vault"` (Debug-quoted). A bare `.contains("vault")`
+    // would false-pass because VAULT_AUD ("apokryphos-redact-vault") also
+    // contains "vault" and may surface in logs from other call sites.
     assert!(
-        logs.contains("vault"),
-        "FR-033: the audience tag (\"vault\") must be present on the failure \
-         event so operators can filter per-audience. logs={logs}",
+        logs.contains(r#"audience="vault""#),
+        "FR-033: the audience tag (audience=\"vault\") must be present on \
+         the failure event so operators can filter per-audience. logs={logs}",
     );
 }
 
@@ -276,10 +280,14 @@ async fn admin_failure_logs_emit_admin_audience_tag() {
         logs.contains("auth.token.missing"),
         "missing-token category must appear. logs={logs}",
     );
+    // Same rationale as the vault test above: match the
+    // `tracing_subscriber::fmt` field shape `audience="admin"` exactly,
+    // since the bare substring "admin" appears in ADMIN_AUD,
+    // `/admin/whoami`, the issuer URL, etc.
     assert!(
-        logs.contains("admin"),
-        "FR-033: the audience tag (\"admin\") must be present on the failure \
-         event. logs={logs}",
+        logs.contains(r#"audience="admin""#),
+        "FR-033: the audience tag (audience=\"admin\") must be present on \
+         the failure event. logs={logs}",
     );
 }
 
