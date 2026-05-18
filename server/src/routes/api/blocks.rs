@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, State};
 use axum::http::{HeaderValue, Method, Request as HttpRequest, StatusCode, header};
 use axum::response::Response;
 use axum::routing::any;
@@ -80,18 +80,37 @@ pub fn routes(
 /// internally so the byte-identical 404 (FR-019) is the single fallthrough
 /// for any unsupported method. Reading the body is deferred to the PUT
 /// branch — GET and DELETE never touch `request.into_body()`.
+///
+/// ## Why we extract the ID from the raw URI (FR-014 / FR-022)
+///
+/// The handler intentionally does NOT use `axum::extract::Path<String>`.
+/// That extractor percent-decodes the path segment before the handler
+/// sees it, which would let a client smuggle a non-canonical URL past
+/// `BlockId::parse`: e.g. `/api/blocks/%41AAA...` decodes to a 43-char
+/// alphabet-clean string and would be accepted as a valid canonical
+/// ID, bypassing the FR-022 byte-identical 404 contract. Additionally,
+/// malformed percent-encodings cause `Path<String>` to short-circuit
+/// with axum's default 400, sidestepping our `respond_block_400` /
+/// `respond_block_404` constructors and breaking response-shape
+/// uniformity. `request.uri().path()` returns the WIRE form (RFC 3986
+/// path-and-query slice, with `%`-encodings intact); since `%` is not
+/// in the base64url alphabet, any percent-encoded segment fails
+/// `BlockId::parse` and maps cleanly to `respond_block_404()`.
 async fn handle_block(
     Extension(storage): Extension<Arc<dyn StorageProvider>>,
     State(state): State<AppState>,
-    Path(id_str): Path<String>,
     request: HttpRequest<Body>,
 ) -> Response {
     let method = request.method().clone();
     let subject = subject_from_request(&request);
     let address = address_from_request(&request);
 
+    // Raw, pre-percent-decode path. See module-level docstring above.
+    let raw_path = request.uri().path();
+    let id_str = raw_path.strip_prefix("/api/blocks/").unwrap_or("");
+
     // FR-014: validate block-ID format BEFORE any storage call.
-    let id = match BlockId::parse(&id_str) {
+    let id = match BlockId::parse(id_str) {
         Some(id) => id,
         None => {
             // Malformed ID → byte-identical 404 (FR-022).

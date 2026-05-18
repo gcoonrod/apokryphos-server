@@ -2,10 +2,12 @@
 //!
 //! Enforces the Principle III "all block-storage backend I/O goes through
 //! the `StorageProvider` trait" guarantee at the test-suite level. Greps
-//! `server/src/` for any reference to `std::fs::*`, `tokio::fs::*`,
-//! `std::os::unix::fs::*`, `nix::fs::*`, or `tempfile::*` and fails if
-//! any match falls outside `server/src/storage/` (or `server/src/config/`,
-//! which legitimately reads the config TOML at startup).
+//! `server/src/` for both fully-qualified calls (`std::fs::read(...)`)
+//! AND the `use std::fs; ... fs::read(...)` import-then-bare-call
+//! bypass pattern, across `std::fs`, `tokio::fs`, `std::os::unix::fs`,
+//! `nix::fs`, and `tempfile`. Fails if any match falls outside
+//! `server/src/storage/` (or `server/src/config/`, which legitimately
+//! reads the config TOML at startup).
 //!
 //! Comment-only matches are filtered so internal documentation (and this
 //! file itself) can name the forbidden APIs without tripping the test.
@@ -36,7 +38,10 @@ fn no_direct_fs_calls_outside_storage_module() {
 
     let output = Command::new("grep")
         .arg("-rnE")
-        .arg("std::fs::|tokio::fs::|std::os::unix::fs::|nix::fs::|tempfile::")
+        .arg(
+            "std::fs::|tokio::fs::|std::os::unix::fs::|nix::fs::|tempfile::|\
+             use std::fs|use tokio::fs|use std::os::unix::fs|use nix::fs|use tempfile",
+        )
         .arg("server/src/")
         .current_dir(&workspace_root)
         .output()

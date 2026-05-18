@@ -4,12 +4,29 @@
 //! Every emission MUST go through one of the helpers below so field names
 //! stay consistent and the event-name constants are greppable.
 //!
-//! Phase 4 storage events forbid the following fields under FR-025:
-//! `payload`, `payload_prefix`, `payload_hash`, `error.message` (the raw
-//! `io::Error::to_string()`), `file_path` (the on-disk path). Only
+//! ## Phase 4 storage events — two distinct field policies
+//!
+//! The Phase 4 events fall into two classes with different field rules:
+//!
+//! **Per-request block events** — `storage.put.*`, `storage.get.*`,
+//! `storage.delete.*`. Under FR-025 these MUST NOT carry: `payload`,
+//! `payload_prefix`, `payload_hash`, the raw `io::Error::to_string()`,
+//! or `file_path` (the on-disk shard path). The allowlist is:
 //! `block_id` (43-char canonical OR the `BLOCK_ID_MALFORMED` sentinel),
 //! `subject`, `address`, and the per-event categorized `cause` /
-//! `size_bytes` fields may appear.
+//! `size_bytes` fields. The `file_path` prohibition is specifically
+//! the per-request on-disk shard path, not the operator-configured
+//! storage root.
+//!
+//! **Startup events** — `storage.startup.ready` and
+//! `storage.startup.failed`. These run BEFORE any client request is
+//! served and exist to make misconfiguration diagnosable for the
+//! operator. They carry `root_path` (the operator-configured storage
+//! root) per data-model.md §"Log-event schema" and FR-011's "structured
+//! startup-error event identifying the root path as the failure cause".
+//! `root_path` is the operator's own configuration value, not a
+//! request-scoped on-disk path, so the per-request `file_path` ban
+//! does not apply.
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
