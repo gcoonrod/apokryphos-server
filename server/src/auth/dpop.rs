@@ -144,8 +144,8 @@ pub(crate) async fn validate_proof(
 
     // ── Step 2: FR-017 signature verify against the embedded jwk. ──────
     let embedded_jwk = header.jwk.ok_or(AuthFailure::ProofSignatureInvalid)?;
-    let decoding_key = DecodingKey::from_jwk(&embedded_jwk)
-        .map_err(|_| AuthFailure::ProofSignatureInvalid)?;
+    let decoding_key =
+        DecodingKey::from_jwk(&embedded_jwk).map_err(|_| AuthFailure::ProofSignatureInvalid)?;
 
     let mut validation = Validation::new(alg.to_jwt_algorithm());
     // DPoP proofs have no aud/iss/exp; jsonwebtoken's `Validation` would
@@ -294,9 +294,10 @@ fn urls_equivalent_ct(a: &Url, b: &Url) -> bool {
     // be present on either side, reject the proof outright if either
     // URL has userinfo. `Url::username()` returns an empty string when
     // none is set; `Url::password()` returns None.
-    let no_userinfo =
-        a.username().is_empty() && a.password().is_none()
-            && b.username().is_empty() && b.password().is_none();
+    let no_userinfo = a.username().is_empty()
+        && a.password().is_none()
+        && b.username().is_empty()
+        && b.password().is_none();
     scheme_eq && host_eq && port_eq && path_eq && query_eq && no_userinfo
 }
 

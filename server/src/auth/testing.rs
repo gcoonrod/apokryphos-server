@@ -74,10 +74,7 @@ use url::Url;
 /// Convert an ES256 verifying (public) key into the `jsonwebtoken::jwk::Jwk`
 /// JSON shape the mock JWKS endpoint serves. Returns a `serde_json::Value`
 /// for cheap composition into the JWKS response.
-pub fn es256_public_jwk(
-    verifying_key: &p256::ecdsa::VerifyingKey,
-    kid: Option<&str>,
-) -> Value {
+pub fn es256_public_jwk(verifying_key: &p256::ecdsa::VerifyingKey, kid: Option<&str>) -> Value {
     let point = verifying_key.to_encoded_point(false);
     let x = point.x().expect("p256 uncompressed encoding has x");
     let y = point.y().expect("p256 uncompressed encoding has y");
@@ -158,17 +155,12 @@ impl MockOidcProvider {
             jwks_fetches: Arc::new(AtomicU64::new(0)),
             jwks_v2_fetches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             base_url: Arc::new(base_url),
-            discovery_jwks_uri: Arc::new(arc_swap::ArcSwap::from_pointee(
-                "/jwks.json".to_string(),
-            )),
+            discovery_jwks_uri: Arc::new(arc_swap::ArcSwap::from_pointee("/jwks.json".to_string())),
             jwks_status_override: Arc::new(std::sync::atomic::AtomicU16::new(0)),
         };
 
         let router = Router::new()
-            .route(
-                "/.well-known/openid-configuration",
-                get(serve_discovery),
-            )
+            .route("/.well-known/openid-configuration", get(serve_discovery))
             .route("/jwks.json", get(serve_jwks))
             .route("/jwks-v2.json", get(serve_jwks_v2))
             .with_state(state.clone());
@@ -296,9 +288,7 @@ async fn serve_jwks(
 /// by the next scheduled JWKS refresh. Serves the same `state.jwks`
 /// payload — the *URL* is what's under test, not the body.
 async fn serve_jwks_v2(State(state): State<MockState>) -> Json<Value> {
-    state
-        .jwks_v2_fetches
-        .fetch_add(1, Ordering::SeqCst);
+    state.jwks_v2_fetches.fetch_add(1, Ordering::SeqCst);
     Json((*state.jwks.load_full()).clone())
 }
 
@@ -355,10 +345,10 @@ pub fn mint_es256_token(
             .insert("nbf".into(), serde_json::json!(nbf));
     }
     if !omit_cnf_jkt {
-        claims_json.as_object_mut().unwrap().insert(
-            "cnf".into(),
-            serde_json::json!({ "jkt": claims.cnf_jkt }),
-        );
+        claims_json
+            .as_object_mut()
+            .unwrap()
+            .insert("cnf".into(), serde_json::json!({ "jkt": claims.cnf_jkt }));
     }
 
     let pem = signing_key

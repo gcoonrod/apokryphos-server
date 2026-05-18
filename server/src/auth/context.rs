@@ -329,11 +329,7 @@ pub(crate) fn install_refreshed_jwks(
     self_ctx: &OidcContext,
     new_jwks: Jwks,
 ) -> Result<(), OverlapError> {
-    let Some(other_arc) = self_ctx
-        .other
-        .get()
-        .and_then(|weak| weak.upgrade())
-    else {
+    let Some(other_arc) = self_ctx.other.get().and_then(|weak| weak.upgrade()) else {
         tracing::error!(
             event = "context.refresh.cross_reach_failed",
             audience = self_ctx.tag.name(),
@@ -388,7 +384,9 @@ mod tests_no_feature {
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
-    use crate::auth::testing::{MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair};
+    use crate::auth::testing::{
+        MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair,
+    };
     use crate::config::OidcAudienceConfig;
     use p256::ecdsa::SigningKey;
     use serde_json::json;
@@ -428,14 +426,9 @@ mod tests {
         let auth_cfg = Arc::new(AuthConfig::default());
         let http_client = reqwest::Client::new();
 
-        let ctx = init_single_context(
-            AudienceTag::Vault,
-            &oidc_cfg,
-            auth_cfg,
-            &http_client,
-        )
-        .await
-        .expect("init_single_context must succeed against a healthy mock");
+        let ctx = init_single_context(AudienceTag::Vault, &oidc_cfg, auth_cfg, &http_client)
+            .await
+            .expect("init_single_context must succeed against a healthy mock");
 
         // Each endpoint fetched exactly once during initialization.
         assert_eq!(

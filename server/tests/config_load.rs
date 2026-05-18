@@ -47,7 +47,10 @@ fn assert_missing_key(removed: &str, expected_key: &str) {
     let err = load_from(env, None).expect_err("expected ConfigError for missing key");
     match err {
         ConfigError::Missing { key } => {
-            assert_eq!(key, expected_key, "wrong key reported for missing {removed}")
+            assert_eq!(
+                key, expected_key,
+                "wrong key reported for missing {removed}"
+            )
         }
         other => panic!("expected ConfigError::Missing for {removed}, got {other:?}"),
     }
@@ -151,7 +154,9 @@ fn invalid_cidr_rejected_with_position() {
     );
     let err = load_from(env, None).expect_err("invalid CIDR should fail");
     match err {
-        ConfigError::InvalidCidr { entry, position, .. } => {
+        ConfigError::InvalidCidr {
+            entry, position, ..
+        } => {
             assert_eq!(entry, "not-a-cidr");
             assert_eq!(position, 1);
         }
@@ -214,7 +219,10 @@ fn empty_vault_audience_rejected() {
     let mut env = full_env();
     env.insert("APOK_VAULT_OIDC_AUDIENCE".into(), "".into());
     let err = load_from(env, None).expect_err("empty audience should fail");
-    assert!(matches!(err, ConfigError::EmptyAudience { audience: "vault" }));
+    assert!(matches!(
+        err,
+        ConfigError::EmptyAudience { audience: "vault" }
+    ));
 }
 
 #[test]
@@ -222,7 +230,13 @@ fn invalid_issuer_url_rejected() {
     let mut env = full_env();
     env.insert("APOK_VAULT_OIDC_ISSUER_URL".into(), "not a url".into());
     let err = load_from(env, None).expect_err("malformed URL should fail");
-    assert!(matches!(err, ConfigError::InvalidIssuerUrl { audience: "vault", .. }));
+    assert!(matches!(
+        err,
+        ConfigError::InvalidIssuerUrl {
+            audience: "vault",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -263,7 +277,11 @@ fn issuer_url_with_query_rejected() {
     let err = load_from(env, None).expect_err("query component should fail");
     assert!(matches!(
         err,
-        ConfigError::IssuerUrlHasComponent { audience: "vault", component: "query", .. }
+        ConfigError::IssuerUrlHasComponent {
+            audience: "vault",
+            component: "query",
+            ..
+        }
     ));
 }
 
@@ -277,7 +295,11 @@ fn issuer_url_with_fragment_rejected() {
     let err = load_from(env, None).expect_err("fragment component should fail");
     assert!(matches!(
         err,
-        ConfigError::IssuerUrlHasComponent { audience: "admin", component: "fragment", .. }
+        ConfigError::IssuerUrlHasComponent {
+            audience: "admin",
+            component: "fragment",
+            ..
+        }
     ));
 }
 
@@ -311,7 +333,12 @@ fn lowercase_env_name_is_treated_as_absent() {
     env.remove("APOK_BIND_ADDRESS");
     env.insert("apok_bind_address".into(), "127.0.0.1:8080".into());
     let err = load_from(env, None).expect_err("lowercase env is not recognized");
-    assert!(matches!(err, ConfigError::Missing { key: "bind_address" }));
+    assert!(matches!(
+        err,
+        ConfigError::Missing {
+            key: "bind_address"
+        }
+    ));
 }
 
 // ─────────────────── Phase 3 [auth] block coverage ───────────────────────
@@ -349,8 +376,8 @@ fn auth_duration_field_positive_toml() {
         clock_skew_secs = 120
         dpop_freshness_secs = 45
     "#;
-    let cfg = load_from(BTreeMap::new(), Some(toml))
-        .expect("auth TOML with overrides should validate");
+    let cfg =
+        load_from(BTreeMap::new(), Some(toml)).expect("auth TOML with overrides should validate");
     assert_eq!(cfg.auth.clock_skew_secs, 120);
     assert_eq!(cfg.auth.dpop_freshness_secs, 45);
     // Other fields keep their defaults.
@@ -377,7 +404,10 @@ fn auth_max_replay_entries_below_minimum_rejected() {
     let mut env = full_env();
     env.insert("APOK_AUTH_MAX_REPLAY_ENTRIES".into(), "512".into());
     let err = load_from(env, None).expect_err("max_replay_entries below floor should be rejected");
-    assert!(matches!(err, ConfigError::InvalidAuthMaxReplayEntries { .. }));
+    assert!(matches!(
+        err,
+        ConfigError::InvalidAuthMaxReplayEntries { .. }
+    ));
 }
 
 #[test]
@@ -395,7 +425,8 @@ fn auth_replay_window_below_freshness_plus_skew_rejected() {
     env.insert("APOK_AUTH_CLOCK_SKEW_SECS".into(), "60".into());
     env.insert("APOK_AUTH_DPOP_FRESHNESS_SECS".into(), "30".into());
     env.insert("APOK_AUTH_JTI_REPLAY_WINDOW_SECS".into(), "89".into());
-    let err = load_from(env, None).expect_err("replay window < freshness + skew should be rejected");
+    let err =
+        load_from(env, None).expect_err("replay window < freshness + skew should be rejected");
     match err {
         ConfigError::AuthReplayWindowTooSmall {
             window,
@@ -438,8 +469,7 @@ fn auth_env_overrides_toml() {
     // jti_replay_window_secs is omitted from both TOML and env, `parse_auth`
     // resolves it to `freshness + skew = 37` (NOT the AuthConfig::default()
     // value of 90), and the cross-field invariant trivially holds at 37 >= 37.
-    let cfg = load_from(env, Some(toml))
-        .expect("env should override TOML for auth keys");
+    let cfg = load_from(env, Some(toml)).expect("env should override TOML for auth keys");
     assert_eq!(cfg.auth.clock_skew_secs, 7, "env wins over TOML");
     // Assert the resolved replay window matches the freshness+skew rule,
     // not the AuthConfig::default() value — this is what the spec

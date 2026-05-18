@@ -47,9 +47,7 @@ pub mod testing;
 // Phase 2 + Phase 3 (US1 first step) re-exports. Phase 3 US2 will broaden
 // this as `VaultGuard`, `AdminGuard`, `init_contexts`, etc. land. See
 // contracts/internal.md §`auth/mod.rs`.
-pub use context::{
-    AudienceTag, ContextInitError, OidcContext, init_contexts, init_single_context,
-};
+pub use context::{AudienceTag, ContextInitError, OidcContext, init_contexts, init_single_context};
 pub use discovery::{Discovery, DiscoveryFetchError};
 pub use failure::{respond_401, respond_503_memory_pressure};
 pub use jwks::{Jwk, Jwks, JwksFetchError, JwsAlg};

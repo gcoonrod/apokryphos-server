@@ -29,16 +29,14 @@ mod common;
 use std::sync::Arc;
 
 use apokryphos_server::AppState;
-use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::JtiReplayStore;
+use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, header};

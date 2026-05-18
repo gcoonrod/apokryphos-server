@@ -147,8 +147,8 @@ fn spearman_rho_handles_ties_correctly() {
 #[test]
 #[ignore = "T059: SC-011 constant-time timing test; run with --ignored on a quiesced workstation"]
 fn ct_eq_bytes_is_constant_time_spearman() {
-    use rand_chacha::rand_core::{RngCore, SeedableRng};
     use rand_chacha::ChaCha8Rng;
+    use rand_chacha::rand_core::{RngCore, SeedableRng};
 
     const N_PREFIXES: usize = 33;
     let control = [0xAAu8; 32];
@@ -173,8 +173,9 @@ fn ct_eq_bytes_is_constant_time_spearman() {
     // governor changes frequency over the test's wallclock window —
     // a naive monotonic loop would falsely correlate low frequencies
     // with high prefix indices.
-    let mut samples: Vec<Vec<u128>> =
-        (0..N_PREFIXES).map(|_| Vec::with_capacity(RUNS_PER_PREFIX)).collect();
+    let mut samples: Vec<Vec<u128>> = (0..N_PREFIXES)
+        .map(|_| Vec::with_capacity(RUNS_PER_PREFIX))
+        .collect();
     let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE_BEEF_DEAD_BABEu64);
     let mut order: [usize; N_PREFIXES] = std::array::from_fn(|i| i);
     for _round in 0..RUNS_PER_PREFIX {

@@ -37,16 +37,14 @@ mod common;
 use std::sync::Arc;
 
 use apokryphos_server::AppState;
-use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::JtiReplayStore;
+use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderValue, Method, Request, Response, StatusCode, header};
@@ -177,15 +175,14 @@ async fn capture(response: Response<Body>) -> WireImage {
         .await
         .unwrap()
         .to_vec();
-    WireImage { status, headers, body }
+    WireImage {
+        status,
+        headers,
+        body,
+    }
 }
 
-fn req(
-    method: Method,
-    uri: &str,
-    auth: Option<&str>,
-    dpop: Option<&str>,
-) -> Request<Body> {
+fn req(method: Method, uri: &str, auth: Option<&str>, dpop: Option<&str>) -> Request<Body> {
     let mut b = Request::builder()
         .method(method)
         .uri(uri)
@@ -413,8 +410,7 @@ fn build_cases() -> Vec<Case> {
             let token = mint_vault_token(fx, "u-11");
             let now = now_unix_secs();
             let good = mint_proof_bound(fx, &token, "GET", VAULT_HTU, now, "jti-11");
-            let mut parts: Vec<String> =
-                good.split('.').map(|s| s.to_string()).collect();
+            let mut parts: Vec<String> = good.split('.').map(|s| s.to_string()).collect();
             parts[2] = b64.encode([0xCCu8; 64]);
             let bad = parts.join(".");
             req(Method::GET, "/api/whoami", Some(&token), Some(&bad))
@@ -503,8 +499,10 @@ fn build_cases() -> Vec<Case> {
             label: "proof_replayed",
             request: Box::new(move |_| {
                 let guard = st.lock().unwrap();
-                let (token, proof) =
-                    guard.as_ref().expect("priming case ran before replay").clone();
+                let (token, proof) = guard
+                    .as_ref()
+                    .expect("priming case ran before replay")
+                    .clone();
                 req(Method::GET, "/api/whoami", Some(&token), Some(&proof))
             }),
         });

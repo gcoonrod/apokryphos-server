@@ -30,16 +30,14 @@ mod common;
 use std::sync::Arc;
 
 use apokryphos_server::AppState;
+use apokryphos_server::auth::JtiReplayStore;
 use apokryphos_server::auth::context::init_contexts;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::auth::JtiReplayStore;
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
@@ -62,8 +60,7 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
     let admin_signing = generate_es256_keypair(&mut rng);
     let third_signing = generate_es256_keypair(&mut rng);
 
-    let vault_jwk_initial =
-        es256_public_jwk(vault_signing.verifying_key(), Some(VAULT_KID));
+    let vault_jwk_initial = es256_public_jwk(vault_signing.verifying_key(), Some(VAULT_KID));
     let admin_jwk = es256_public_jwk(admin_signing.verifying_key(), Some(ADMIN_KID));
 
     let vault_jwks_initial = serde_json::json!({ "keys": [&vault_jwk_initial] });
@@ -105,12 +102,7 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(
-        state,
-        Some(vault_ctx),
-        Some(admin_ctx),
-        Some(replay_store),
-    );
+    let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
 
     // ── Step 2: positive control — a token signed by the ORIGINAL vault
     // key validates successfully against the cached JWKS. ────────────────
@@ -138,8 +130,7 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
 
     // ── Step 3: swap the vault mock's served JWKS to include admin's
     // key — the runtime overlap FR-007 forbids. ─────────────────────────
-    let overlapping_jwks =
-        serde_json::json!({ "keys": [&vault_jwk_initial, &admin_jwk] });
+    let overlapping_jwks = serde_json::json!({ "keys": [&vault_jwk_initial, &admin_jwk] });
     vault_mock.set_jwks(overlapping_jwks);
 
     // ── Step 4: issue a request with a token signed by the THIRD key,
@@ -162,8 +153,7 @@ async fn runtime_jwks_overlap_rejected_without_exit() {
         nbf: None,
         cnf_jkt: third_thumbprint,
     };
-    let third_token =
-        mint_es256_token(&third_token_claims, &third_signing, Some(THIRD_KID), false);
+    let third_token = mint_es256_token(&third_token_claims, &third_signing, Some(THIRD_KID), false);
     let third_proof = mint_proof_for(
         &third_signing,
         "GET",

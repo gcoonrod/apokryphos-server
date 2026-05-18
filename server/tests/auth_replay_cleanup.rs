@@ -66,9 +66,7 @@ async fn maintenance_tick_removes_expired_and_allows_reinsertion() {
     for (raw, key) in &keys {
         match store.try_insert(*key, post_cleanup_deadline.into_std()) {
             Ok(()) => {} // expected
-            Err(e) => panic!(
-                "after maintenance_tick, jti {raw} should re-insert cleanly; got {e}"
-            ),
+            Err(e) => panic!("after maintenance_tick, jti {raw} should re-insert cleanly; got {e}"),
         }
     }
     assert_eq!(
@@ -98,7 +96,11 @@ async fn entries_are_not_silently_evicted_when_maintenance_is_not_called() {
     // The entries should remain present; FR-021 forbids implicit eviction.
     tokio::time::advance(Duration::from_millis((N as u64) + 10)).await;
 
-    assert_eq!(store.len(), N, "len() must NOT change without maintenance_tick");
+    assert_eq!(
+        store.len(),
+        N,
+        "len() must NOT change without maintenance_tick"
+    );
     // Re-inserting any of the original jtis must still report Replayed,
     // proving the entries are physically present in `entries`.
     let any_future_deadline = Instant::now() + Duration::from_secs(60);
@@ -106,9 +108,9 @@ async fn entries_are_not_silently_evicted_when_maintenance_is_not_called() {
         match store.try_insert(*key, any_future_deadline.into_std()) {
             Err(ReplayInsertError::Replayed) => {} // expected
             Err(other) => panic!("expected Replayed for {raw}, got {other}"),
-            Ok(()) => panic!(
-                "{raw} was silently evicted without maintenance_tick — FR-021 violation"
-            ),
+            Ok(()) => {
+                panic!("{raw} was silently evicted without maintenance_tick — FR-021 violation")
+            }
         }
     }
 }

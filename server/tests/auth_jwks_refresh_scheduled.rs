@@ -104,12 +104,7 @@ async fn setup() -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(
-        state,
-        Some(Arc::clone(&ctx)),
-        None,
-        Some(replay_store),
-    );
+    let router = build_router(state, Some(Arc::clone(&ctx)), None, Some(replay_store));
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     Fixture {
@@ -314,12 +309,10 @@ async fn jwks_uri_change_propagates_through_scheduled_discovery_refresh() {
     mock.set_discovery_jwks_uri("/jwks-v2.json");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let discovery_task = tokio::spawn(
-        apokryphos_server::auth::discovery::scheduled_refresh_task(
-            Arc::clone(&ctx),
-            shutdown_rx.clone(),
-        ),
-    );
+    let discovery_task = tokio::spawn(apokryphos_server::auth::discovery::scheduled_refresh_task(
+        Arc::clone(&ctx),
+        shutdown_rx.clone(),
+    ));
     let jwks_task = tokio::spawn(apokryphos_server::auth::jwks::scheduled_refresh_task(
         Arc::clone(&ctx),
         shutdown_rx,

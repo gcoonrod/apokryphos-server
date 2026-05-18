@@ -11,10 +11,10 @@
 //! check is the structural override per Clarify-Q1; routing `/health` via
 //! `get(handler)` would leak `Allow: GET` on every `POST /health` response.
 
+use axum::Json;
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 
 use crate::logging::events::emit_request_rejected;

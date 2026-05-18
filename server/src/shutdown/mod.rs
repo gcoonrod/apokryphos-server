@@ -49,7 +49,11 @@ pub fn install_signals() -> io::Result<InstalledSignals> {
     let sigint = signal(SignalKind::interrupt())?;
     let sigterm = signal(SignalKind::terminate())?;
     let sighup = signal(SignalKind::hangup())?;
-    Ok(InstalledSignals { sigint, sigterm, sighup })
+    Ok(InstalledSignals {
+        sigint,
+        sigterm,
+        sighup,
+    })
 }
 
 /// Production: await whichever of the pre-installed signal streams fires
@@ -97,7 +101,10 @@ pub type ShutdownRx = tokio::sync::watch::Receiver<bool>;
 pub fn shutdown_coordinator(
     signals: InstalledSignals,
     drain_timeout: Duration,
-) -> (impl std::future::Future<Output = ()> + Send + 'static, ShutdownRx) {
+) -> (
+    impl std::future::Future<Output = ()> + Send + 'static,
+    ShutdownRx,
+) {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let fut = async move {
         wait_for_signal(signals, drain_timeout).await;

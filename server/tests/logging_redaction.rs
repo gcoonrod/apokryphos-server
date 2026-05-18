@@ -21,7 +21,10 @@ fn debug_path_redacts() {
     let (logs, _) = with_captured_logs(|| {
         tracing::info!(token = ?s, "debug-path test");
     });
-    assert!(logs.contains("<redacted>"), "expected <redacted> in:\n{logs}");
+    assert!(
+        logs.contains("<redacted>"),
+        "expected <redacted> in:\n{logs}"
+    );
     assert!(!logs.contains(SECRET), "secret leaked in:\n{logs}");
 }
 

@@ -163,10 +163,7 @@ mod tests {
                 .unwrap(),
             r#"DPoP algs="PS256 ES256""#
         );
-        assert_eq!(
-            response.headers().get(header::CONTENT_LENGTH).unwrap(),
-            "0"
-        );
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
         assert!(response.headers().get(header::CONTENT_TYPE).is_none());
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert!(body.is_empty());
@@ -194,10 +191,7 @@ mod tests {
     async fn respond_503_memory_pressure_has_fixed_shape() {
         let response = respond_503_memory_pressure();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            response.headers().get(header::CONTENT_LENGTH).unwrap(),
-            "0"
-        );
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
         assert!(response.headers().get(header::CONTENT_TYPE).is_none());
         assert!(response.headers().get("retry-after").is_none());
     }
@@ -232,6 +226,10 @@ mod tests {
         let mut sorted = categories.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(categories.len(), sorted.len(), "duplicate category strings: {categories:?}");
+        assert_eq!(
+            categories.len(),
+            sorted.len(),
+            "duplicate category strings: {categories:?}"
+        );
     }
 }

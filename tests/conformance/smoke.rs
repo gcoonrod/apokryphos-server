@@ -43,10 +43,11 @@ async fn test_story_1_vault_happy_path() {
 
     let sub = "conformance-vault-user-1";
     let token = server.mint_vault_token(sub);
-    let proof =
-        server.mint_dpop_proof(Audience::Vault, &token, "GET", VAULT_HTU, "smoke-1-jti");
+    let proof = server.mint_dpop_proof(Audience::Vault, &token, "GET", VAULT_HTU, "smoke-1-jti");
 
-    let resp = server.oneshot(req(Method::GET, VAULT_URI, &token, &proof)).await;
+    let resp = server
+        .oneshot(req(Method::GET, VAULT_URI, &token, &proof))
+        .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
     let body: Value = serde_json::from_slice(&body_bytes).expect("JSON body");
@@ -75,7 +76,12 @@ async fn test_story_2_cross_audience_isolation() {
     );
 
     let resp = server
-        .oneshot(req(Method::GET, VAULT_URI, &admin_token, &admin_proof_at_vault))
+        .oneshot(req(
+            Method::GET,
+            VAULT_URI,
+            &admin_token,
+            &admin_proof_at_vault,
+        ))
         .await;
     assert_eq!(
         resp.status(),
@@ -109,7 +115,9 @@ async fn test_story_3_dpop_replay() {
     );
 
     // First presentation: success.
-    let resp1 = server.oneshot(req(Method::GET, VAULT_URI, &token, &proof)).await;
+    let resp1 = server
+        .oneshot(req(Method::GET, VAULT_URI, &token, &proof))
+        .await;
     assert_eq!(
         resp1.status(),
         StatusCode::OK,
@@ -117,7 +125,9 @@ async fn test_story_3_dpop_replay() {
     );
 
     // Second presentation of the same proof: replay rejected.
-    let resp2 = server.oneshot(req(Method::GET, VAULT_URI, &token, &proof)).await;
+    let resp2 = server
+        .oneshot(req(Method::GET, VAULT_URI, &token, &proof))
+        .await;
     assert_eq!(
         resp2.status(),
         StatusCode::UNAUTHORIZED,
@@ -137,7 +147,9 @@ async fn test_admin_happy_path() {
     let proof =
         server.mint_dpop_proof(Audience::Admin, &token, "GET", ADMIN_HTU, "smoke-admin-jti");
 
-    let resp = server.oneshot(req(Method::GET, ADMIN_URI, &token, &proof)).await;
+    let resp = server
+        .oneshot(req(Method::GET, ADMIN_URI, &token, &proof))
+        .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
     let body: Value = serde_json::from_slice(&body_bytes).expect("JSON body");

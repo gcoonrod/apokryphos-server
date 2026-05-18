@@ -15,17 +15,15 @@ mod common;
 
 use std::sync::Arc;
 
+use apokryphos_server::AppState;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::auth::{
-    AudienceTag, JtiReplayStore, init_single_context,
-};
+use apokryphos_server::auth::{AudienceTag, JtiReplayStore, init_single_context};
 use apokryphos_server::config::{AuthConfig, OidcAudienceConfig};
 use apokryphos_server::routes::build_router;
-use apokryphos_server::AppState;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use serde_json::Value;
@@ -167,7 +165,11 @@ async fn whoami_vault_happy_path_returns_200_with_sub() {
     );
 
     let obj = body_json.as_object().expect("body must be a JSON object");
-    assert_eq!(obj.len(), 1, "FR-027: body MUST contain exactly one field (sub); got {body_json}");
+    assert_eq!(
+        obj.len(),
+        1,
+        "FR-027: body MUST contain exactly one field (sub); got {body_json}"
+    );
     assert_eq!(
         obj.get("sub").and_then(Value::as_str),
         Some("vault-user-42"),

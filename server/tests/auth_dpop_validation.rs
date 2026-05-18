@@ -10,6 +10,7 @@ mod common;
 
 use std::sync::Arc;
 
+use apokryphos_server::AppState;
 use apokryphos_server::auth::testing::{
     MintTokenClaims, MockOidcProvider, deterministic_rng, es256_public_jwk,
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
@@ -18,7 +19,6 @@ use apokryphos_server::auth::testing::{
 use apokryphos_server::auth::{AudienceTag, JtiReplayStore, init_single_context};
 use apokryphos_server::config::{AuthConfig, OidcAudienceConfig};
 use apokryphos_server::routes::build_router;
-use apokryphos_server::AppState;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use tower::ServiceExt;
@@ -66,11 +66,7 @@ async fn setup_fixture(seed: u64) -> Fixture {
     // varying only the proof. cnf.jkt is bound to the signing key's
     // public thumbprint.
     let cnf_jkt = es256_thumbprint_b64url(signing_key.verifying_key());
-    let iss = mock
-        .issuer_url()
-        .as_str()
-        .trim_end_matches('/')
-        .to_string();
+    let iss = mock.issuer_url().as_str().trim_end_matches('/').to_string();
     let now = now_unix_secs();
     let token = mint_es256_token(
         &MintTokenClaims {
@@ -107,12 +103,7 @@ async fn drive(router: &axum::Router, token: &str, proof: &str) -> StatusCode {
         .header("dpop", HeaderValue::from_str(proof).unwrap())
         .body(Body::empty())
         .unwrap();
-    router
-        .clone()
-        .oneshot(request)
-        .await
-        .unwrap()
-        .status()
+    router.clone().oneshot(request).await.unwrap().status()
 }
 
 // ─────────────────────── Positive control ───────────────────────────────
@@ -311,9 +302,8 @@ async fn negative_ath_mismatch_rejected() {
     // this gives us a valid-but-different access token whose wire-form
     // bytes differ from fx.token. The proof binds to the second token's
     // bytes via ath, but the request presents fx.token in Authorization.
-    let cnf_jkt = apokryphos_server::auth::testing::es256_thumbprint_b64url(
-        fx.signing_key.verifying_key(),
-    );
+    let cnf_jkt =
+        apokryphos_server::auth::testing::es256_thumbprint_b64url(fx.signing_key.verifying_key());
     let iss = fx
         .mock
         .issuer_url()

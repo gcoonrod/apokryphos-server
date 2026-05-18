@@ -29,7 +29,10 @@ fn main() -> ExitCode {
     apokryphos_server::logging::install_global_subscriber(cli.log_level.as_tracing_level());
 
     // Step 3: build the runtime and run the server. (Unchanged from Phase 2.)
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             tracing::error!(error = %e, "failed to construct tokio runtime");

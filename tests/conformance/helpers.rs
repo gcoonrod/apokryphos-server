@@ -38,9 +38,7 @@ use apokryphos_server::auth::testing::{
     es256_thumbprint_b64url, generate_es256_keypair, mint_es256_dpop_proof, mint_es256_token,
     now_unix_secs,
 };
-use apokryphos_server::config::{
-    AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend,
-};
+use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 use apokryphos_server::routes::build_router;
 use axum::body::Body;
 use axum::http::{Request, Response};
@@ -124,8 +122,7 @@ impl TestServer {
         let state = AppState {
             config: Arc::new(cfg.clone()),
         };
-        let router =
-            build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
+        let router = build_router(state, Some(vault_ctx), Some(admin_ctx), Some(replay_store));
 
         TestServer {
             router,
