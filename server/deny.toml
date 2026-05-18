@@ -26,9 +26,28 @@ all-features = true
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/RustSec/advisory-db"]
 ignore = [
-    # Add `RUSTSEC-YYYY-NNNN` entries here with a justification comment
-    # when an advisory is known to not apply (e.g. transitive dep we
-    # don't exercise the vulnerable code path of).
+    # RUSTSEC-2023-0071 — Marvin Attack on `rsa` crate
+    # (timing side-channel on RSA private-key operations).
+    #
+    # Why this does not apply to apokryphos-server:
+    #   * `rsa` is declared `optional = true` in server/Cargo.toml and is
+    #     gated behind the `test-utils` Cargo feature. The production
+    #     binary never links it (Phase 3 test-utils-gated optional
+    #     deps pattern; see server/Cargo.toml comment block).
+    #   * The only consumer is `auth::testing::*` (mint helpers used by
+    #     integration tests to sign test tokens). These run in CI
+    #     and on developer workstations only — never network-exposed.
+    #   * The Marvin Attack vector requires an adversary able to observe
+    #     timing of the victim's RSA private-key operations across a
+    #     network. Our test-token mint flow is not reachable from the
+    #     network in any deployment.
+    #
+    # Revisit if/when: (a) a patched `rsa` release lands (the RustCrypto
+    # team is migrating to a constant-time impl per the advisory's
+    # "Patches" note) — drop this ignore once that ships; or (b) the
+    # project starts using `rsa` outside test-utils (would require
+    # constitution review under Principle II constant-time gate).
+    "RUSTSEC-2023-0071",
 ]
 
 # ─────────────────────────── Licenses ─────────────────────────────────────

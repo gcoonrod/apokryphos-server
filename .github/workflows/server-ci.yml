@@ -37,6 +37,12 @@ concurrency:
 
 permissions:
   contents: read
+  # `checks: write` is required by `rustsec/audit-check@v2` to publish
+  # the audit findings as an inline check-run on the PR. Without it the
+  # action's primary report path 404s ("Resource not accessible by
+  # integration") and it falls back to step-log output, which is still
+  # functional but loses the inline annotation.
+  checks: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -131,10 +137,15 @@ jobs:
       - uses: actions/checkout@v6
 
       # cargo-audit: scan Cargo.lock against the RustSec advisory DB.
+      # See `server/deny.toml` [advisories] for the justification on
+      # each `ignore` entry. Both this action AND cargo-deny consult
+      # the same advisory database, so the ignore list must be kept
+      # in sync between this file and `server/deny.toml`.
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: server
+          ignore: RUSTSEC-2023-0071
 
       # cargo-deny: license + banned-deps + duplicate-version + source check.
       # `manifest-path` points at the server crate; `deny.toml` lives next to it.
