@@ -60,7 +60,7 @@ async fn setup_fixture(seed: u64) -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(state, Some(vault_ctx), None, Some(replay_store));
+    let router = build_router(state, Some(vault_ctx), None, Some(replay_store), None);
 
     // Pre-mint the access token; all DPoP tests reuse the same token,
     // varying only the proof. cnf.jkt is bound to the signing key's

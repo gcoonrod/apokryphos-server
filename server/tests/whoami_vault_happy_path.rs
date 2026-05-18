@@ -74,7 +74,7 @@ async fn setup_fixture() -> Fixture {
     let state = AppState {
         config: Arc::new(minimal_valid_config()),
     };
-    let router = build_router(state, Some(vault_ctx), None, Some(replay_store));
+    let router = build_router(state, Some(vault_ctx), None, Some(replay_store), None);
 
     Fixture {
         mock,

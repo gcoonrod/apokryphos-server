@@ -106,3 +106,167 @@ impl ConfigBuilderExt for ServerConfig {
         self
     }
 }
+
+// ──────────────────── Phase 4 block-storage test fixture ────────────────────
+
+/// Shared block-test fixture: vault context against a `MockOidcProvider`,
+/// `LocalFsProvider` over a `TempDir`, assembled `axum::Router`, and the
+/// ES256 signing key for minting tokens + DPoP proofs.
+///
+/// Used by Phase 4 integration tests (`blocks_*`, `no_direct_fs`, etc.) so
+/// each test file declares only its own scenarios, not the auth wiring.
+pub struct BlockTestFixture {
+    pub mock: apokryphos_server::auth::testing::MockOidcProvider,
+    pub block_root: tempfile::TempDir,
+    pub router: axum::Router,
+    pub signing_key: p256::ecdsa::SigningKey,
+    pub vault_aud: &'static str,
+    pub kid: &'static str,
+    pub block_size_bytes: u64,
+}
+
+pub const BLOCK_FIXTURE_KID: &str = "vault-key-1";
+pub const BLOCK_FIXTURE_AUD: &str = "apokryphos-test-vault";
+pub const BLOCK_FIXTURE_SIZE: u64 = 256;
+
+/// Build a `BlockTestFixture` with a fresh tempdir-backed `LocalFsProvider`.
+/// The block routes are mounted (vault subtree) but the admin subtree is
+/// absent — block tests that need admin-token coverage build their own
+/// admin context inline.
+pub async fn build_block_fixture(seed: u64) -> BlockTestFixture {
+    use std::sync::Arc;
+
+    use apokryphos_server::AppState;
+    use apokryphos_server::auth::testing::{
+        MockOidcProvider, deterministic_rng, es256_public_jwk, generate_es256_keypair,
+    };
+    use apokryphos_server::auth::{AudienceTag, JtiReplayStore, init_single_context};
+    use apokryphos_server::config::{AuthConfig, OidcAudienceConfig, StorageBackend};
+    use apokryphos_server::routes::build_router;
+    use apokryphos_server::storage::{LocalFsProvider, StorageProvider};
+
+    let mut rng = deterministic_rng(seed);
+    let signing_key = generate_es256_keypair(&mut rng);
+    let verifying = signing_key.verifying_key();
+    let jwks_doc = serde_json::json!({
+        "keys": [es256_public_jwk(verifying, Some(BLOCK_FIXTURE_KID))]
+    });
+    let mock = MockOidcProvider::start(jwks_doc).await;
+
+    let oidc_cfg = OidcAudienceConfig {
+        issuer_url: mock.issuer_url(),
+        audience: BLOCK_FIXTURE_AUD.to_string(),
+    };
+    let auth_cfg = Arc::new(AuthConfig::default());
+    let http_client = openidconnect::reqwest::Client::new();
+    let vault_ctx = init_single_context(
+        AudienceTag::Vault,
+        &oidc_cfg,
+        Arc::clone(&auth_cfg),
+        &http_client,
+    )
+    .await
+    .expect("init_single_context");
+    let replay_store = Arc::new(JtiReplayStore::new(Arc::clone(&auth_cfg)));
+
+    let block_root = tempfile::tempdir().expect("tempdir");
+    let storage: Arc<dyn StorageProvider> = Arc::new(LocalFsProvider::new_unchecked(
+        block_root.path().to_path_buf(),
+    ));
+
+    let mut cfg = minimal_valid_config();
+    cfg.block_size_bytes = BLOCK_FIXTURE_SIZE;
+    cfg.storage_backend = StorageBackend::LocalFs {
+        root: block_root.path().to_path_buf(),
+    };
+
+    let router = build_router(
+        AppState {
+            config: Arc::new(cfg),
+        },
+        Some(vault_ctx),
+        None,
+        Some(replay_store),
+        Some(storage),
+    );
+
+    BlockTestFixture {
+        mock,
+        block_root,
+        router,
+        signing_key,
+        vault_aud: BLOCK_FIXTURE_AUD,
+        kid: BLOCK_FIXTURE_KID,
+        block_size_bytes: BLOCK_FIXTURE_SIZE,
+    }
+}
+
+/// Mint a vault access token bound to the fixture's `signing_key`.
+pub fn block_fixture_mint_token(f: &BlockTestFixture, sub: &str) -> String {
+    use apokryphos_server::auth::testing::{
+        MintTokenClaims, es256_thumbprint_b64url, mint_es256_token, now_unix_secs,
+    };
+    let cnf_jkt = es256_thumbprint_b64url(f.signing_key.verifying_key());
+    let iss = f
+        .mock
+        .issuer_url()
+        .as_str()
+        .trim_end_matches('/')
+        .to_string();
+    let now = now_unix_secs();
+    mint_es256_token(
+        &MintTokenClaims {
+            sub: sub.to_string(),
+            aud: f.vault_aud.to_string(),
+            iss,
+            iat: now,
+            exp: now + 3600,
+            nbf: None,
+            cnf_jkt,
+        },
+        &f.signing_key,
+        Some(f.kid),
+        false,
+    )
+}
+
+/// Mint a fresh DPoP proof (`jti` should be unique per request — the
+/// Phase 3 replay store rejects duplicates).
+pub fn block_fixture_mint_proof(
+    f: &BlockTestFixture,
+    token: &str,
+    htm: &str,
+    htu: &str,
+    jti: &str,
+) -> String {
+    use apokryphos_server::auth::testing::{mint_es256_dpop_proof, now_unix_secs};
+    mint_es256_dpop_proof(&f.signing_key, htm, htu, now_unix_secs(), jti, Some(token))
+}
+
+/// Construct an authenticated block-route request (any method).
+/// `body` may be empty for GET/DELETE.
+pub fn block_fixture_request(
+    method: axum::http::Method,
+    block_id: &str,
+    token: &str,
+    proof: &str,
+    body: axum::body::Body,
+) -> axum::http::Request<axum::body::Body> {
+    use axum::body::HttpBody;
+    use axum::http::{HeaderValue, Request, header};
+
+    let cl = body.size_hint().exact();
+    let mut req = Request::builder()
+        .method(method)
+        .uri(format!("/api/blocks/{block_id}"))
+        .header(header::HOST, HeaderValue::from_static("127.0.0.1"))
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("DPoP {token}")).unwrap(),
+        )
+        .header("dpop", HeaderValue::from_str(proof).unwrap());
+    if let Some(cl) = cl {
+        req = req.header(header::CONTENT_LENGTH, cl.to_string());
+    }
+    req.body(body).unwrap()
+}

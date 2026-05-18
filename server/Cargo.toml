@@ -20,8 +20,10 @@ test-utils = ["dep:rsa", "dep:p256", "dep:rand", "dep:rand_chacha"]
 # Phase 3 (FAPI 2.0 + DPoP auth core) — see specs/003-fapi-dpop-auth-core/plan.md
 # Complexity Tracking + research.md R1 for the justification of every new dep.
 arc-swap = "1"
+async-trait = "0.1"
 axum = "0.8"
 base64 = "0.22"
+bytes = "1"
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 ipnet = "2.10"
 jsonwebtoken = "9"
@@ -42,7 +44,8 @@ serde_json = "1.0"
 sha2 = "0.10"
 subtle = "2"
 thiserror = "2.0"
-tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync"] }
+tempfile = "3"
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "fs"] }
 toml = "0.8"
 # `tower` was Phase 2 dev-only (integration-test `ServiceExt::oneshot`).
 # Phase 3 promotes it to a regular dep because `auth::middleware::VaultGuard`
@@ -53,12 +56,14 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 url = "2"
 
 [dev-dependencies]
-tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util"] }
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "test-util", "fs"] }
 # Re-listed here (with the `util` feature) for `tower::ServiceExt::oneshot`
 # in integration tests; the runtime dep above lacks `util` to keep the
 # release binary slim.
 tower = { version = "0.5", features = ["util"] }
+libc = "0.2"
 trybuild = "1"
+walkdir = "2"
 
 [[test]]
 name = "config_load"
@@ -167,4 +172,64 @@ required-features = ["test-utils"]
 [[test]]
 name = "conformance"
 path = "../tests/conformance/main.rs"
+required-features = ["test-utils"]
+
+# Phase 4 (Cypher-block storage) — see specs/004-block-storage/tasks.md for the
+# task-to-test mapping. Every stanza requires the existing test-utils feature so
+# integration tests can mint vault tokens + DPoP proofs via auth::testing.
+
+[[test]]
+name = "blocks_round_trip"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_size_enforcement"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_uniform_not_found"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_startup_validation"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_global_namespace"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_storage_unavailable_503"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_get_headers"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_id_property"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_log_redaction"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_unauthenticated_401_regression"
+required-features = ["test-utils"]
+
+[[test]]
+name = "no_direct_fs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_concurrent_writes"
+required-features = ["test-utils"]
+
+[[test]]
+name = "blocks_provider_invariants"
+required-features = ["test-utils"]
+
+[[test]]
+name = "bench_blocks_local_fs"
 required-features = ["test-utils"]

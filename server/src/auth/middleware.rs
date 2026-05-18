@@ -41,15 +41,38 @@ use crate::proxy_trust::{EffectiveAddress, EffectiveScheme};
 /// `Layer::layer(...)` wraps the inner service so every authenticated
 /// request runs through the token + DPoP pipeline before reaching a
 /// handler.
+///
+/// `auth_methods` controls which HTTP methods trigger the auth pipeline.
+/// The default is `[GET]` — matching the Phase 3 whoami route, where any
+/// non-GET method bypasses auth and falls through to the in-handler 404
+/// dispatch (FR-030 leak prevention). Phase 4 block routes use
+/// `.with_methods([GET, PUT, DELETE])` because all three verbs are real
+/// route surfaces that demand auth.
 #[derive(Clone)]
 pub struct VaultGuard {
     ctx: Arc<OidcContext>,
     replay: Arc<JtiReplayStore>,
+    auth_methods: Arc<Vec<axum::http::Method>>,
 }
 
-/// Build a `VaultGuard` bound to the given context + replay store.
+/// Build a `VaultGuard` bound to the given context + replay store. Defaults
+/// to authenticating only `GET` (matches Phase 3 whoami behavior).
 pub fn vault_guard(ctx: Arc<OidcContext>, replay: Arc<JtiReplayStore>) -> VaultGuard {
-    VaultGuard { ctx, replay }
+    VaultGuard {
+        ctx,
+        replay,
+        auth_methods: Arc::new(vec![axum::http::Method::GET]),
+    }
+}
+
+impl VaultGuard {
+    /// Override the set of HTTP methods that trigger the auth pipeline.
+    /// Methods outside this set fall through to the inner service
+    /// unauthenticated (FR-030 leak-prevention pattern).
+    pub fn with_methods(mut self, methods: impl IntoIterator<Item = axum::http::Method>) -> Self {
+        self.auth_methods = Arc::new(methods.into_iter().collect());
+        self
+    }
 }
 
 impl<S> Layer<S> for VaultGuard {
@@ -59,6 +82,7 @@ impl<S> Layer<S> for VaultGuard {
             inner,
             ctx: Arc::clone(&self.ctx),
             replay: Arc::clone(&self.replay),
+            auth_methods: Arc::clone(&self.auth_methods),
         }
     }
 }
@@ -68,6 +92,7 @@ pub struct VaultGuardService<S> {
     inner: S,
     ctx: Arc<OidcContext>,
     replay: Arc<JtiReplayStore>,
+    auth_methods: Arc<Vec<axum::http::Method>>,
 }
 
 impl<S> Service<Request> for VaultGuardService<S>
@@ -100,16 +125,19 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
-        // FR-030 leak prevention: for non-GET methods, the guard MUST
-        // pass through to the inner service WITHOUT running the auth
-        // pipeline. The inner handler (registered with `any(...)`) will
-        // dispatch on method and return a 404 for non-GET — which is
-        // indistinguishable from a path-mismatch 404. If we ran the
-        // auth pipeline for non-GET, an unauthenticated POST/HEAD
-        // would receive a 401 with `WWW-Authenticate: DPoP ...` and
-        // reveal the route's existence. The auth pipeline is meaningful
-        // only on the verb the route actually services.
-        if request.method() != axum::http::Method::GET {
+        // FR-030 leak prevention: for methods OUTSIDE the auth-method set
+        // (e.g., POST / PATCH on a route that only serves GET / PUT /
+        // DELETE), the guard MUST pass through to the inner service
+        // WITHOUT running the auth pipeline. The inner handler
+        // (registered with `any(...)`) will dispatch on method and
+        // return a 404 — indistinguishable from a path-mismatch 404.
+        // If we ran the auth pipeline for those methods, an
+        // unauthenticated POST would receive a 401 with
+        // `WWW-Authenticate: DPoP ...` and reveal the route's existence.
+        // The auth pipeline runs only on verbs the route actually
+        // services (configurable via `VaultGuard::with_methods`).
+        let auth_methods = Arc::clone(&self.auth_methods);
+        if !auth_methods.iter().any(|m| m == request.method()) {
             return Box::pin(async move { inner.call(request).await });
         }
 

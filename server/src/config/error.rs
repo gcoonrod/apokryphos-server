@@ -19,8 +19,16 @@ pub enum ConfigError {
     #[error("block_size_bytes must be a positive integer, got {value:?}")]
     InvalidBlockSize { value: String },
 
-    #[error("storage_backend must be \"none\" in this phase, got {value:?}")]
+    #[error("storage_backend must be \"none\" or \"local_fs\", got {value:?}")]
     InvalidStorageBackend { value: String },
+
+    #[error(
+        "storage_backend = \"local_fs\" requires [storage.local_fs] root = \"<path>\" (or APOK_STORAGE_LOCAL_FS_ROOT)"
+    )]
+    LocalFsRootMissing,
+
+    #[error("storage.local_fs.root must be an absolute path, got {value:?}")]
+    LocalFsRootNotAbsolute { value: PathBuf },
 
     #[error("trusted_proxies entry {entry:?} at position {position} is not a valid CIDR: {source}")]
     InvalidCidr {

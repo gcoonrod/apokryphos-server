@@ -51,6 +51,9 @@ use crate::proxy_trust::{self, EffectiveAddress};
 ///     replay store are supplied. Phase 3 US1 always supplies them; the
 ///     `Option<...>` shape leaves room for the dual-context wiring in
 ///     US2 (T034).
+///   - `/api/blocks/{id}` (vault-guarded — Phase 4 FR-016..018) when the
+///     vault context, replay store, AND storage provider are all supplied.
+///     The storage `Arc` is NOT plumbed into the admin subtree (FR-021).
 ///   - Phase 2's proxy-trust layer (so the `request.rejected` event
 ///     carries the effective client address).
 ///   - Phase 2's path-mismatch 404 fallback. Method mismatches on the
@@ -60,6 +63,7 @@ pub fn build_router(
     vault_ctx: Option<Arc<OidcContext>>,
     admin_ctx: Option<Arc<OidcContext>>,
     replay_store: Option<Arc<JtiReplayStore>>,
+    storage: Option<Arc<dyn crate::storage::StorageProvider>>,
 ) -> Router {
     let mut router = Router::new().route("/health", any(health::handle_health));
 
@@ -71,7 +75,7 @@ pub fn build_router(
     // any(handler) dispatcher to a byte-shape-identical 404, never
     // returning a 401 that would reveal the route's existence (FR-030).
     if let (Some(ctx), Some(replay)) = (vault_ctx, replay_store.clone()) {
-        router = router.merge(api::vault_routes(ctx, replay));
+        router = router.merge(api::vault_routes(ctx, replay, storage));
     }
     if let (Some(ctx), Some(replay)) = (admin_ctx, replay_store) {
         router = router.merge(admin::admin_routes(ctx, replay));

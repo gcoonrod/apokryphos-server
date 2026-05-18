@@ -33,9 +33,13 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 use crate::config::{self, ConfigError, ServerConfig};
-use crate::logging::events::{emit_server_shutdown_completed, emit_server_started};
+use crate::logging::events::{
+    emit_server_shutdown_completed, emit_server_started, emit_storage_startup_failed,
+    emit_storage_startup_ready,
+};
 use crate::routes;
 use crate::shutdown;
+use crate::storage::{self, StorageInitError};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -74,6 +78,13 @@ pub enum AppError {
     /// reachable from `app.rs` until the dual-context constructor lands.
     #[error("auth subsystem initialization failed: {0}")]
     Auth(String),
+
+    /// Phase 4 storage subsystem startup failure: the configured block root
+    /// is missing, not a directory, or not writable. The corresponding
+    /// `storage.startup.failed` event has already been emitted at the point
+    /// where this variant is constructed (see `run`).
+    #[error("storage subsystem initialization failed: {0}")]
+    Storage(#[from] StorageInitError),
 }
 
 /// Production entry point. Returns `Err` for config-load / bind / serve
@@ -129,6 +140,25 @@ pub async fn run() -> Result<(), AppError> {
     let (vault_ctx, admin_ctx) = crate::auth::context::init_contexts(&cfg, &http_client)
         .await
         .map_err(|e| AppError::Auth(e.to_string()))?;
+
+    // Phase 4 storage init (FR-011, plan.md §"Bootstrap order" step 5).
+    // Failure here exits before bind with a structured `storage.startup.failed`
+    // event. Success emits `storage.startup.ready` before the auth-task spawn
+    // and the `server.started` event below. Returns Option: None means the
+    // operator selected `storage_backend = "none"` (Phase 2/3 fixtures) and
+    // block routes are not mounted.
+    let storage_provider = match storage::init_from_config(&cfg).await {
+        Ok(opt) => {
+            if let crate::config::StorageBackend::LocalFs { root } = &cfg.storage_backend {
+                emit_storage_startup_ready(&root.display().to_string());
+            }
+            opt
+        }
+        Err(e) => {
+            emit_storage_startup_failed(&e.root_path().display().to_string(), e.step(), e.cause());
+            return Err(AppError::Storage(e));
+        }
+    };
 
     let replay_store = Arc::new(crate::auth::JtiReplayStore::new(Arc::clone(&auth_cfg)));
 
@@ -190,6 +220,7 @@ pub async fn run() -> Result<(), AppError> {
         Some(Arc::clone(&vault_ctx)),
         Some(Arc::clone(&admin_ctx)),
         Some(Arc::clone(&replay_store)),
+        storage_provider,
     );
     serve_with_shutdown(listener, router, shutdown_fut, drain_timeout).await
 }

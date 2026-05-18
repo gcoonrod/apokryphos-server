@@ -3,9 +3,10 @@
 //! FR-011a, Clarify-Q4).
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
-use super::env::{PartialAuth, PartialConfig, PartialOidc, TrustedProxiesSource};
+use super::env::{PartialAuth, PartialConfig, PartialOidc, PartialStorage, TrustedProxiesSource};
 use super::error::ConfigError;
 use super::server_config::{AuthConfig, OidcAudienceConfig, ServerConfig, StorageBackend};
 
@@ -20,7 +21,7 @@ pub fn validate(p: PartialConfig) -> Result<ServerConfig, ConfigError> {
     .ok_or(ConfigError::Missing {
         key: "block_size_bytes",
     })?;
-    let storage_backend = parse_storage_backend(p.storage_backend)?;
+    let storage_backend = parse_storage_backend(p.storage_backend, p.storage)?;
     let trusted_proxies = parse_trusted_proxies(p.trusted_proxies)?;
     let drain_timeout = parse_drain_timeout(p.drain_timeout_secs)?;
     let vault_oidc = parse_oidc("vault", p.vault_oidc)?;
@@ -182,12 +183,26 @@ fn parse_positive_u64(
     Ok(Some(parsed))
 }
 
-fn parse_storage_backend(value: Option<String>) -> Result<StorageBackend, ConfigError> {
-    let v = value.ok_or(ConfigError::Missing {
+fn parse_storage_backend(
+    discriminator: Option<String>,
+    storage_block: Option<PartialStorage>,
+) -> Result<StorageBackend, ConfigError> {
+    let v = discriminator.ok_or(ConfigError::Missing {
         key: "storage_backend",
     })?;
     match v.as_str() {
         "none" => Ok(StorageBackend::None),
+        "local_fs" => {
+            let root = storage_block
+                .and_then(|s| s.local_fs)
+                .and_then(|lfs| lfs.root)
+                .ok_or(ConfigError::LocalFsRootMissing)?;
+            let path = PathBuf::from(root);
+            if !path.is_absolute() {
+                return Err(ConfigError::LocalFsRootNotAbsolute { value: path });
+            }
+            Ok(StorageBackend::LocalFs { root: path })
+        }
         _ => Err(ConfigError::InvalidStorageBackend { value: v }),
     }
 }
