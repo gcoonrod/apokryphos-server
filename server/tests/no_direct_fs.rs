@@ -39,8 +39,22 @@ fn no_direct_fs_calls_outside_storage_module() {
     let output = Command::new("grep")
         .arg("-rnE")
         .arg(
+            // Three families of patterns:
+            //   1. Fully-qualified call sites: `std::fs::read(...)` etc.
+            //   2. Prefix-form imports: `use std::fs;` / `use std::fs::*;`
+            //      / `use std::fs::read;` — all start with `use <module>`.
+            //   3. Brace-group imports: `use std::{fs};` / `use std::{io,
+            //      fs};` — neither (1) nor (2) catches these because the
+            //      `{` breaks the literal `std::fs` token.
+            //
+            // The brace-group patterns match `fs` followed by `,` or `}`
+            // inside a brace group, which covers the common ways `fs`
+            // can appear in a `use std::{...}` list without false-
+            // matching unrelated imports like `use std::{collections}`.
             "std::fs::|tokio::fs::|std::os::unix::fs::|nix::fs::|tempfile::|\
-             use std::fs|use tokio::fs|use std::os::unix::fs|use nix::fs|use tempfile",
+             use std::fs|use tokio::fs|use std::os::unix::fs|use nix::fs|use tempfile|\
+             use std::\\{[^}]*fs[,}]|use tokio::\\{[^}]*fs[,}]|\
+             use std::os::unix::\\{[^}]*fs[,}]|use nix::\\{[^}]*fs[,}]",
         )
         .arg("server/src/")
         .current_dir(&workspace_root)
