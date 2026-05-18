@@ -47,6 +47,20 @@ fn no_direct_fs_calls_outside_storage_module() {
         .output()
         .expect("grep must execute (is it installed?)");
 
+    // POSIX grep exit codes: 0 = matches found, 1 = no matches, ≥2 = error
+    // (regex error, unreadable path, missing search root, signal). If we
+    // skipped this check and grep died with code 2 (e.g. `server/src/`
+    // renamed or removed), stdout would be empty and the lint would
+    // silently no-op — turning the FR-012 enforcement into a placebo.
+    // Fail loudly with stderr so a future contributor sees what broke.
+    match output.status.code() {
+        Some(0) | Some(1) => {}
+        other => panic!(
+            "grep exited with status {other:?} (expected 0 or 1); stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut violations: Vec<&str> = Vec::new();
 

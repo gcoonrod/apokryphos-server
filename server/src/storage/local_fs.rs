@@ -128,11 +128,18 @@ fn run_init_probe(root: &Path) -> Result<(), StorageInitError> {
             source,
         })?;
     let probe_dst = root.join(PROBE_FILENAME);
-    temp.persist(&probe_dst)
-        .map_err(|persist_err| StorageInitError::RootNotWritable {
+    // `persist_noclobber` fails with EEXIST if `probe_dst` already exists
+    // (e.g. from a previous crashed startup, or an operator file that
+    // happened to share the name). Plain `persist` would silently clobber
+    // and then unlink it; refuse instead so the operator can investigate.
+    // The resulting RootNotWritable still signals "fix your root path"
+    // — the failure mode is the same shape as a real permission denial.
+    temp.persist_noclobber(&probe_dst).map_err(|persist_err| {
+        StorageInitError::RootNotWritable {
             path: root.to_path_buf(),
             source: persist_err.error,
-        })?;
+        }
+    })?;
     // Best-effort unlink. If this fails, the probe file lingers but
     // the writability assertion is already proven; do not fail startup.
     let _ = std::fs::remove_file(&probe_dst);
@@ -152,6 +159,22 @@ fn run_put(root: &Path, id: &BlockId, payload: &[u8]) -> Result<(), StorageError
             cause: BackendFailureCause::classify(&source),
             source,
         })?;
+
+    // FR-010 / FR-008a defense-in-depth: `DirBuilder::create` with
+    // `.mode(0o700)` only applies to directories it creates fresh — a
+    // pre-existing shard dir (left by a previous crashed run, or by an
+    // operator who pre-created the layout) retains its old mode. Force
+    // both shard levels to 0o700 on every put so the provider's
+    // "shard dirs are 0700" promise holds even when shards pre-exist.
+    let top = root.join(id.shard_top());
+    for dir in [&top, &shard] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(
+            |source| StorageError::Backend {
+                cause: BackendFailureCause::classify(&source),
+                source,
+            },
+        )?;
+    }
 
     let mut temp = tempfile::Builder::new()
         .prefix(".put.")
