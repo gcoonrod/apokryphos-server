@@ -3,13 +3,10 @@ name = "apokryphos-server"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0"
 # This binary is the self-hosted API tier of a homelab cypher-block
 # vault. The repository as a whole is open-source and auditable
-# end-to-end under AGPL-3.0-or-later (see `LICENSE` at repo root);
-# the AGPL's network-use clause is intentional for a self-hosted
-# blind-server design (anyone running a modified server tier MUST
-# publish their modifications, even when access is over a network).
+# end-to-end under Apache-2.0 (see `LICENSE` at repo root).
 #
 # `publish = false` because this is a binary crate; it's never
 # uploaded to crates.io. It would still build and link fine if

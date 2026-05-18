@@ -52,4 +52,4 @@ These versions were last validated on **2026-05-14**. Contributors using newer m
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — the planned 3-tier topology (reverse proxy → Rust API → decoupled SPAs).
 - **[SECURITY.md](./SECURITY.md)** — how to privately report a vulnerability via GitHub Private Security Advisories.
-- **[LICENSE](./LICENSE)** — full license text. The project is licensed under **AGPL-3.0-or-later**: the network-use clause is intentional for a self-hosted blind-server design, so anyone operating a modified server tier — including over a network — must publish their modifications.
+- **[LICENSE](./LICENSE)** — full license text. The project is licensed under **Apache-2.0**.

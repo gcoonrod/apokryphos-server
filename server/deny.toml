@@ -59,10 +59,8 @@ ignore = [
 # model.
 allow = [
     "0BSD",
-    # AGPL-3.0-or-later: the project's own license (see LICENSE at repo
-    # root). Allowing it here lets cargo-deny accept `apokryphos-server`
-    # itself when the [licenses.private] ignore is removed in the future.
-    "AGPL-3.0-or-later",
+    # Apache-2.0 is the project's own license (see LICENSE at repo root).
+    # It's also one of the most common third-party license families.
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
