@@ -55,7 +55,7 @@ subtle = "2"
 thiserror = "2.0"
 tempfile = "3"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "net", "time", "sync", "fs"] }
-toml = "0.8"
+toml = "1.1"
 # `tower` was Phase 2 dev-only (integration-test `ServiceExt::oneshot`).
 # Phase 3 promotes it to a regular dep because `auth::middleware::VaultGuard`
 # / `AdminGuard` implement `tower::Layer` as part of the public lib surface.
