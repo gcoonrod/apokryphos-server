@@ -44,7 +44,7 @@ parking_lot = "0.12"
 # [dev-dependencies]) because [dev-dependencies] are invisible to the lib
 # crate itself, which is where `auth::testing` lives behind `cfg(feature = "test-utils")`.
 p256 = { version = "0.13", features = ["ecdsa"], optional = true }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 rand_chacha = { version = "0.3", optional = true }
 rsa = { version = "0.9", optional = true }
 rusqlite = { version = "0.39", features = ["bundled"] }
