@@ -49,3 +49,8 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# Reference-deployment local-only artifacts (the `.example` variants ARE
+# committed; the live working copies are operator-local).
+deploy/apokryphos.toml
+deploy/caddy-local-ca.crt

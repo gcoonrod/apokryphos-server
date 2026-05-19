@@ -1,0 +1,154 @@
+{
+  "realm": "vault",
+  "enabled": true,
+  "displayName": "Apokryphos Vault",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 900,
+  "ssoSessionMaxLifespan": 28800,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "defaultSignatureAlgorithm": "PS256",
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "rsa-ps256-generated",
+        "providerId": "rsa-generated",
+        "config": {
+          "priority": ["100"],
+          "active": ["true"],
+          "enabled": ["true"],
+          "algorithm": ["PS256"],
+          "keySize": ["2048"]
+        }
+      },
+      {
+        "name": "ecdsa-es256-generated",
+        "providerId": "ecdsa-generated",
+        "config": {
+          "priority": ["100"],
+          "active": ["true"],
+          "enabled": ["true"],
+          "ecdsaEllipticCurveKey": ["P-256"]
+        }
+      },
+      {
+        "name": "rsa-enc-generated",
+        "providerId": "rsa-enc-generated",
+        "config": {
+          "priority": ["50"],
+          "active": ["true"],
+          "enabled": ["true"],
+          "algorithm": ["RSA-OAEP"],
+          "keySize": ["2048"]
+        }
+      },
+      {
+        "name": "hmac-generated-hs512",
+        "providerId": "hmac-generated",
+        "config": {
+          "priority": ["50"],
+          "active": ["true"],
+          "enabled": ["true"],
+          "algorithm": ["HS512"]
+        }
+      },
+      {
+        "name": "aes-generated",
+        "providerId": "aes-generated",
+        "config": {
+          "priority": ["50"],
+          "active": ["true"],
+          "enabled": ["true"]
+        }
+      }
+    ]
+  },
+  "clientPolicies": {
+    "policies": [
+      {
+        "name": "apokryphos-vault-fapi-2-dpop",
+        "description": "Apply the built-in fapi-2-dpop-security-profile to clients with dpop.bound.access.tokens=true.",
+        "enabled": true,
+        "conditions": [
+          {
+            "condition": "client-attributes",
+            "configuration": {
+              "attribute": "dpop.bound.access.tokens",
+              "value": "true"
+            }
+          }
+        ],
+        "profiles": ["fapi-2-dpop-security-profile"]
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "apokryphos-vault-audience",
+      "description": "Adds aud=apokryphos-vault to access tokens.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "apokryphos-vault-audience-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "apokryphos-vault",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "apokryphos-vault-audience"
+  ],
+  "clients": [
+    {
+      "clientId": "vault-spa",
+      "name": "Apokryphos Vault SPA",
+      "description": "Browser-side vault client. Replace redirectUris before going past localhost dev.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "https://api.apokryphos.local/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "https://api.apokryphos.local"
+      ],
+      "attributes": {
+        "dpop.bound.access.tokens": "true",
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+",
+        "access.token.signed.response.alg": "PS256",
+        "use.refresh.tokens": "true"
+      }
+    }
+  ]
+}
