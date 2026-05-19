@@ -1,0 +1,249 @@
+# Server crate CI — fmt / clippy / test + security / MSRV / release-build.
+#
+# Layout follows the design in `specs/server-ci-workflow/design.md`:
+#   - Single workflow file at `.github/workflows/server-ci.yml`
+#     (GitHub Actions does not support nested workflow directories).
+#   - "Always-trigger + filter-inside" pattern (Option β): the workflow
+#     fires on every PR, the `changes` job decides whether the rest of
+#     the work runs, and `server-ci-required` is the single aggregator
+#     that branch protection requires. This keeps the required check
+#     stable across PRs that don't touch `server/**`.
+#   - Fast lane (fmt/clippy/test) on every PR; slow lane (security/msrv/
+#     release-build) on changes targeting `develop` or `main` —
+#     whether via PR (`event_name == pull_request` + matching base_ref)
+#     OR via direct push / merge commit to those branches
+#     (`event_name == push` + matching ref_name). Feature-branch pushes
+#     stay snappy because both predicates exclude them.
+#   - Rust pinned to `stable` for fast + security + release-build jobs;
+#     pinned to `1.95` for the MSRV check so it actually catches code
+#     that requires Rust >= 1.96.
+#
+# Security note: every `run:` step uses only static strings or values
+# passed via `env:` blocks. No untrusted github.event.* fields (issue
+# titles, PR bodies, commit messages) are interpolated directly into
+# shell commands — see https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+# for the threat model.
+
+name: server-ci
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+# Cancel in-flight runs on the same ref when a new commit is pushed,
+# UNLESS the ref is `develop` or `main` — we want every merge commit
+# on the protected branches to finish independently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  # `checks: write` is required by `rustsec/audit-check@v2` to publish
+  # the audit findings as an inline check-run on the PR. Without it the
+  # action's primary report path 404s ("Resource not accessible by
+  # integration") and it falls back to step-log output, which is still
+  # functional but loses the inline annotation.
+  checks: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # changes — always runs; classifies the PR/push as touching server/** or not.
+  # Downstream jobs gate on `needs.changes.outputs.server == 'true'`.
+  # ---------------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - '.github/workflows/server-ci.yml'
+
+  # ---------------------------------------------------------------------------
+  # Fast lane — runs on every PR that touches server/**.
+  # ---------------------------------------------------------------------------
+
+  fmt:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          shared-key: fmt
+      - name: cargo fmt --check
+        working-directory: server
+        run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          shared-key: clippy
+      - name: cargo clippy
+        working-directory: server
+        run: cargo clippy --all-targets --features test-utils -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          shared-key: test
+      - name: cargo test
+        working-directory: server
+        # `auth_constant_time_timing` (Phase 3 T059) and
+        # `bench_blocks_local_fs` (Phase 4 T036) stay #[ignore]'d — both
+        # require a quiesced workstation, not a noisy CI runner.
+        run: cargo test --features test-utils -- --test-threads=4
+
+  # ---------------------------------------------------------------------------
+  # Slow lane — only on PRs targeting develop or main.
+  # ---------------------------------------------------------------------------
+
+  security:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.server == 'true' && (
+        (github.event_name == 'pull_request' &&
+         contains(fromJson('["develop","main"]'), github.base_ref))
+        ||
+        (github.event_name == 'push' &&
+         contains(fromJson('["develop","main"]'), github.ref_name))
+      )
+    steps:
+      - uses: actions/checkout@v6
+
+      # cargo-audit: scan Cargo.lock against the RustSec advisory DB.
+      # See `server/deny.toml` [advisories] for the justification on
+      # each `ignore` entry. Both this action AND cargo-deny consult
+      # the same advisory database, so the ignore list must be kept
+      # in sync between this file and `server/deny.toml`.
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: server
+          ignore: RUSTSEC-2023-0071
+
+      # cargo-deny: license + banned-deps + duplicate-version + source check.
+      # `manifest-path` points at the server crate; `deny.toml` lives next to it.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: server/Cargo.toml
+
+  msrv:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.server == 'true' && (
+        (github.event_name == 'pull_request' &&
+         contains(fromJson('["develop","main"]'), github.base_ref))
+        ||
+        (github.event_name == 'push' &&
+         contains(fromJson('["develop","main"]'), github.ref_name))
+      )
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          # Separate cache key so we don't poison the stable-toolchain caches.
+          shared-key: msrv-1.95
+      - name: cargo build (MSRV pin 1.95)
+        working-directory: server
+        run: cargo build --features test-utils
+
+  release-build:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.server == 'true' && (
+        (github.event_name == 'pull_request' &&
+         contains(fromJson('["develop","main"]'), github.base_ref))
+        ||
+        (github.event_name == 'push' &&
+         contains(fromJson('["develop","main"]'), github.ref_name))
+      )
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          shared-key: release
+      - name: cargo build --release (production-shape; no test-utils)
+        working-directory: server
+        run: cargo build --release
+
+  # ---------------------------------------------------------------------------
+  # Aggregator — the ONE required status check.
+  #
+  # Always runs (`if: always()`), fails iff any dependency actually failed
+  # or was cancelled. `skipped` is treated as success — that's how
+  # non-server PRs (filter said no) and feature-branch pushes (slow-lane
+  # predicate said no) get a green required check without doing work.
+  #
+  # **`changes` is treated specially** (per @Copilot review on
+  # server-ci.yml:214). It's the classifier that decides whether
+  # downstream jobs run. If it fails or is cancelled, every downstream
+  # job ends up `skipped` (their `if:` evaluates against a non-success
+  # `changes`), and the generic skipped-is-success rule would silently
+  # turn the aggregator green despite CI never validating the crate.
+  # We fail explicitly when `needs.changes.result != 'success'` to
+  # close that hole.
+  # ---------------------------------------------------------------------------
+  server-ci-required:
+    runs-on: ubuntu-latest
+    needs: [changes, fmt, clippy, test, security, msrv, release-build]
+    if: always()
+    steps:
+      - name: Aggregate job results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          ALL_RESULTS: ${{ toJson(needs.*.result) }}
+        run: |
+          echo "changes job result: $CHANGES_RESULT"
+          echo "All dependency results: $ALL_RESULTS"
+          # changes MUST succeed. Anything else (failure / cancelled /
+          # skipped — though changes itself has no `if:` so skipped
+          # shouldn't happen) means the classifier didn't run and we
+          # can't trust any downstream skip.
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::server-ci-required: changes classifier did not succeed (got '$CHANGES_RESULT') — cannot validate downstream skips"
+            exit 1
+          fi
+          if echo "$ALL_RESULTS" | grep -qE '"failure"|"cancelled"'; then
+            echo "::error::server-ci-required: a dependency failed or was cancelled."
+            exit 1
+          fi
+          echo "All dependencies passed or were intentionally skipped."

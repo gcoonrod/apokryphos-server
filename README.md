@@ -52,4 +52,4 @@ These versions were last validated on **2026-05-14**. Contributors using newer m
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — the planned 3-tier topology (reverse proxy → Rust API → decoupled SPAs).
 - **[SECURITY.md](./SECURITY.md)** — how to privately report a vulnerability via GitHub Private Security Advisories.
-- **[LICENSE](./LICENSE)** — license terms.
+- **[LICENSE](./LICENSE)** — full license text. The project is licensed under **Apache-2.0**.

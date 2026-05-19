@@ -1,0 +1,142 @@
+# cargo-deny configuration for the `apokryphos-server` crate.
+#
+# Consumed by `EmbarkStudios/cargo-deny-action@v2` in
+# `.github/workflows/server-ci.yml` (the `security` job). Also runnable
+# locally: `cd server && cargo deny check`.
+#
+# Sections:
+#   - [advisories]  — RustSec advisory DB checks (CVEs, unmaintained crates).
+#   - [licenses]    — explicit allowlist of permissive licenses.
+#   - [bans]        — duplicate-version + wildcard-spec checks.
+#   - [sources]     — registry/source allowlist (crates.io only).
+#
+# Schema reference: https://embarkstudios.github.io/cargo-deny/checks/
+
+[graph]
+# Target the production build for license/source checks. The default is
+# all-targets, which is what we want for advisory + ban checks too.
+all-features = true
+
+# ─────────────────────────── Advisories ────────────────────────────────────
+
+[advisories]
+# `vulnerability`/`unmaintained`/etc. fields were removed in cargo-deny
+# 0.14+; the modern shape uses `ignore = [...]` for known-irrelevant
+# advisories and treats unfixed advisories as errors by default.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+ignore = [
+    # RUSTSEC-2023-0071 — Marvin Attack on `rsa` crate
+    # (timing side-channel on RSA private-key operations).
+    #
+    # Why this does not apply to apokryphos-server:
+    #   * `rsa` is declared `optional = true` in server/Cargo.toml and is
+    #     gated behind the `test-utils` Cargo feature. The production
+    #     binary never links it (Phase 3 test-utils-gated optional
+    #     deps pattern; see server/Cargo.toml comment block).
+    #   * The only consumer is `auth::testing::*` (mint helpers used by
+    #     integration tests to sign test tokens). These run in CI
+    #     and on developer workstations only — never network-exposed.
+    #   * The Marvin Attack vector requires an adversary able to observe
+    #     timing of the victim's RSA private-key operations across a
+    #     network. Our test-token mint flow is not reachable from the
+    #     network in any deployment.
+    #
+    # Revisit if/when: (a) a patched `rsa` release lands (the RustCrypto
+    # team is migrating to a constant-time impl per the advisory's
+    # "Patches" note) — drop this ignore once that ships; or (b) the
+    # project starts using `rsa` outside test-utils (would require
+    # constitution review under Principle II constant-time gate).
+    "RUSTSEC-2023-0071",
+]
+
+# ─────────────────────────── Licenses ─────────────────────────────────────
+
+[licenses]
+# Permissive license allowlist. Anything outside this list fails the
+# check — add to the list (with rationale in a comment) only after
+# confirming the license is compatible with the project's distribution
+# model.
+allow = [
+    "0BSD",
+    # Apache-2.0 is the project's own license (see LICENSE at repo root).
+    # It's also one of the most common third-party license families.
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    # CDLA-Permissive-2.0: Community Data License Agreement Permissive 2.0
+    # — used by `webpki-roots` (Mozilla's bundled CA root certificate
+    # data). Permissive, no copyleft, commercial-use friendly. Mozilla
+    # uses it specifically because the bundled data is a community
+    # dataset rather than code. https://cdla.dev/permissive-2-0/
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+# Per-crate license exceptions. Add entries here for specific crates
+# whose licensing is unusual but acceptable (e.g. dual-licensed under
+# something not in `allow` AND a license that IS in `allow`).
+exceptions = []
+
+[licenses.private]
+# Skip the license-field check on workspace members marked
+# `publish = false`. The current `apokryphos-server` crate has a
+# proper `license = "AGPL-3.0-or-later"` field so this is no longer
+# load-bearing for it, but the rule remains as a forward-looking
+# default: any internal binary added to the workspace can use
+# `publish = false` without immediately needing a per-crate license
+# field (the repo-level LICENSE at root governs).
+ignore = true
+
+# ─────────────────────────── Bans ─────────────────────────────────────────
+
+[bans]
+# `warn` rather than `deny` for multiple-versions: the Rust ecosystem
+# routinely has multiple versions of common transitive deps (e.g. two
+# minor versions of `windows-sys`). Surfacing them as warnings keeps
+# the audit signal without blocking PRs on transitive churn.
+multiple-versions = "warn"
+
+# Wildcard version specifiers (`*`) defeat the whole point of
+# `Cargo.lock` reproducibility. Always deny.
+wildcards = "deny"
+
+# Crates we never want to depend on, with a rationale per entry.
+deny = [
+    # Example shape (uncomment + edit when needed):
+    # { name = "openssl", reason = "use rustls-based stacks (RustCrypto + rustls) per constitution Principle II side-channel discipline" },
+]
+
+# Crates that are intentionally allowed even if they would otherwise
+# trip a check.
+allow = []
+
+# Skip the multiple-versions check entirely for these crates (use
+# sparingly; prefer fixing the duplicates in the dep graph).
+skip = []
+
+# Same as `skip` but recursive (skip the crate and its entire subtree).
+skip-tree = []
+
+# ─────────────────────────── Sources ──────────────────────────────────────
+
+[sources]
+# Reject crates from registries we haven't allowlisted. crates.io is
+# the only registry we trust by default.
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Reject crates pulled directly from git unless the URL is in
+# `allow-git`. Currently we have none.
+unknown-git = "deny"
+allow-git = []
