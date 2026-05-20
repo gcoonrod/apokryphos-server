@@ -11,6 +11,7 @@
 
 mod env;
 mod error;
+pub mod extra_ca;
 mod file;
 mod merge;
 mod server_config;

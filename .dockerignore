@@ -1,0 +1,40 @@
+# Build context = repo root (compose.yaml uses `context: ..` for the
+# apokryphos-server image). Keep the build context lean.
+
+# Build artifacts
+**/target/
+**/node_modules/
+**/dist/
+**/.parcel-cache/
+
+# Local-only deployment artifacts (the operator's working copy)
+deploy/apokryphos.toml
+deploy/caddy-local-ca.crt
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+
+# Backup files
+**/*.rs.bk
+**/*.swp
+
+# OS metadata
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
+
+# Editor metadata
+**/.idea/
+**/.vscode/
+
+# VCS internals
+.git/
+.gitignore
+.gitattributes
+
+# AI tooling / spec working notes (also gitignored on this public repo)
+CLAUDE.md
+.claude/
+.specify/
+specs/
+.remember/

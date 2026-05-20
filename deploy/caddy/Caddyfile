@@ -1,0 +1,135 @@
+# Caddyfile for the apokryphos homelab reference deployment.
+#
+# Routes:
+#   auth.apokryphos.local  ->  keycloak:8080   (OIDC IdP)
+#   api.apokryphos.local   ->  apokryphos-server:8443 (FAPI 2.0 resource server)
+#   /healthz on :80        ->  204 No Content  (compose healthcheck target)
+#
+# TLS strategy:
+#   The active MVP path uses Caddy's local CA (`tls internal`). On first
+#   request to a TLS host, Caddy generates a CA root cert at
+#   /data/caddy/pki/authorities/local/root.crt and signs per-host certs.
+#   - The browser will warn until you import that root cert (see
+#     deploy/README.md §"Importing the Caddy local CA").
+#   - apokryphos-server trusts this root via APOK_EXTRA_CA_CERT_FILE,
+#     loaded into the OIDC HTTP client at startup (see
+#     deploy/compose.yaml and server/src/config/extra_ca.rs).
+#
+# Production paths (commented stubs further down):
+#   - Let's Encrypt automatic TLS for a real domain (default Caddy behavior).
+#   - Tailscale-issued certs via Caddy's `tls` directive for the
+#     `*.tailnet-name.ts.net` magic-domain.
+{
+	# Global options. `auto_https off` is NOT set — we want Caddy to do
+	# its automatic TLS dance on the local CA. The `email` directive
+	# applies to Let's Encrypt issuance; the placeholder below is
+	# ignored under `tls internal` and only matters when you graduate
+	# to a real CA.
+	email admin@apokryphos.local
+	# Set a non-default servers port if you're behind another reverse
+	# proxy; default 443 + 80 is fine for the homelab compose stack.
+}
+
+# ---------------------------------------------------------------------------
+# Plain HTTP listener.
+#
+# `:80` binds on all interfaces inside the container, and compose's
+# `ports: "80:80"` publishes it to the host's 0.0.0.0:80 — so the routes
+# below ARE reachable from anywhere the host is. That is intentional:
+#
+#   - `/healthz` returns a public unauthenticated 204. It leaks no data
+#     and serves as the compose healthcheck target (`wget` from inside
+#     the container) AND any external uptime probe.
+#   - Every other path on :80 redirects to https://{host}{uri}, which is
+#     standard Caddy behavior but spelled out here so the intent is
+#     unambiguous.
+#
+# If you want /healthz to be in-container-only, drop the `"80:80"`
+# publish in `compose.yaml` (the healthcheck still works because
+# `localhost` inside the container resolves to the :80 listener).
+# ---------------------------------------------------------------------------
+:80 {
+	@healthz path /healthz
+	respond @healthz 204
+	redir /* https://{host}{uri} permanent
+}
+
+# ---------------------------------------------------------------------------
+# auth.apokryphos.local — Keycloak (OIDC IdP)
+# ---------------------------------------------------------------------------
+auth.apokryphos.local {
+	tls internal
+
+	# Strong baseline HTTP security headers. Keycloak already sets some
+	# of these; setting them at the proxy is belt-and-suspenders.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "interest-cohort=()"
+		-Server
+	}
+
+	# X-Forwarded-* headers: Keycloak honors these because we set
+	# KC_PROXY_HEADERS=xforwarded in compose.yaml. Caddy's
+	# reverse_proxy directive sets the standard set by default.
+	reverse_proxy keycloak:8080
+}
+
+# ---------------------------------------------------------------------------
+# api.apokryphos.local — apokryphos-server (resource server)
+# ---------------------------------------------------------------------------
+api.apokryphos.local {
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "interest-cohort=()"
+		# apokryphos-server is an API, not an HTML surface — disallow
+		# embedding entirely and don't advertise the upstream.
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+	}
+
+	# `trust_proxy` is intentionally NOT set — apokryphos-server's own
+	# proxy-trust middleware (Phase 2) validates the X-Forwarded-For
+	# chain against its configured trusted_proxies list. Caddy passes
+	# the forwarded headers; apokryphos-server is the source of truth
+	# for which client IP to trust.
+	reverse_proxy apokryphos-server:8443
+}
+
+# ---------------------------------------------------------------------------
+# Production stubs (commented; uncomment + edit to graduate beyond MVP).
+# ---------------------------------------------------------------------------
+
+# ── Let's Encrypt with a real domain ──────────────────────────────────────
+# Replace `auth.apokryphos.local` above with your real hostname (e.g.
+# `auth.example.com`) and drop the `tls internal` line — Caddy's default
+# automatic HTTPS uses ACME (Let's Encrypt) when the hostname is not a
+# private TLD. The `email` directive in the global block above is the
+# ACME account email.
+#
+# auth.example.com {
+# 	# tls directive omitted -> Let's Encrypt by default
+# 	reverse_proxy keycloak:8080
+# }
+
+# ── Tailscale magic-domain TLS ────────────────────────────────────────────
+# If apokryphos is on your tailnet, Tailscale can issue per-machine certs
+# under `<host>.<tailnet>.ts.net`. Caddy supports this via the `tls
+# get_certificate` directive with the tailscale module. Requires the
+# Caddy build to include github.com/tailscale/caddy-tailscale (not in
+# the stock caddy:2-alpine image — use a custom build or the
+# `caddy:2-builder` flow).
+#
+# auth.apokryphos.tailnet-XXXX.ts.net {
+# 	tls {
+# 		get_certificate tailscale
+# 	}
+# 	reverse_proxy keycloak:8080
+# }

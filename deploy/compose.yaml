@@ -1,0 +1,254 @@
+# apokryphos-server homelab reference deployment.
+#
+# Five services on a single Docker network:
+#   - caddy                — TLS termination (Caddy local CA for MVP);
+#                            reverse-proxies auth.apokryphos.local -> keycloak
+#                            and api.apokryphos.local -> apokryphos-server.
+#   - caddy-cert-publisher — one-shot helper that publishes Caddy's local-CA
+#                            root cert to a separate volume in a mode the
+#                            non-root apokryphos-server user can read.
+#   - postgres             — Keycloak's backing store.
+#   - keycloak             — OIDC IdP, 26.6+ for documented DPoP support.
+#                            Imports `vault` + `apok-admin` realms at first boot.
+#   - apokryphos-server    — the FAPI 2.0 + DPoP resource server (this repo).
+#
+# First boot:
+#   1. cp .env.example .env  and edit the secrets.
+#   2. Add `127.0.0.1 auth.apokryphos.local api.apokryphos.local` to the
+#      host's /etc/hosts (or your local DNS) so the names resolve.
+#   3. `docker compose up -d`
+#   4. Visit https://auth.apokryphos.local/admin (accept the Caddy local-CA
+#      cert in your browser; see deploy/README.md §"Trust the Caddy local
+#      CA in your browser" for importing the CA) and sign in with
+#      KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD from .env.
+#   5. Both realms (`vault`, `apok-admin`) are pre-imported. Create a user
+#      in the `vault` realm; enroll TOTP/WebAuthn.
+#   6. `docker compose logs apokryphos-server` should show "OIDC contexts
+#      initialized" without a startup error.
+#
+# Production hardening NOT included in this MVP reference:
+#   * `tls internal` (self-signed local CA). Switch to Let's Encrypt or
+#     Tailscale TLS by editing `caddy/Caddyfile` once you have a real
+#     hostname; the existing commented stubs show how.
+#   * Postgres + Caddy data are in named volumes — back these up.
+#   * Bootstrap admin password is plaintext in .env — rotate after first
+#     login via the Keycloak admin UI; delete the bootstrap user.
+#   * Keycloak runs `start-dev` for first-boot ergonomics. For production,
+#     switch to `start`, set KC_HOSTNAME_STRICT=true, and provide real TLS
+#     certs or terminate TLS exclusively at Caddy with `KC_HTTP_ENABLED=true`.
+
+name: apokryphos
+
+# ---------------------------------------------------------------------------
+# Common stanzas — DRY config for repeated patterns.
+# ---------------------------------------------------------------------------
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # --------------------------------------------------------------------------
+  # Caddy — TLS termination + reverse proxy.
+  # --------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      apokryphos:
+        # In-network DNS aliases. Other services connect to Caddy via the
+        # same FQDNs that Keycloak puts in token `iss` claims, which is
+        # required for openidconnect discovery validation to succeed.
+        aliases:
+          - auth.apokryphos.local
+          - api.apokryphos.local
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "http://localhost:80/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # --------------------------------------------------------------------------
+  # caddy-cert-publisher — one-shot init service.
+  #
+  # Caddy's `tls internal` mode generates a local CA root certificate at
+  # `/data/caddy/pki/authorities/local/root.crt` inside the Caddy container.
+  # By default that file is created with mode 0600, so the non-root
+  # apokryphos user (uid 10001) cannot read it via a shared volume mount.
+  #
+  # This helper:
+  #   1. Polls the Caddy data volume until the root cert appears.
+  #   2. Copies it to a separate `caddy_ca_export` volume with mode 0644.
+  #   3. Exits 0 (one-shot semantics, restart: "no").
+  #
+  # `apokryphos-server` then waits on `service_completed_successfully`
+  # before starting, guaranteeing the cert is available at the path
+  # `APOK_EXTRA_CA_CERT_FILE` points to.
+  # --------------------------------------------------------------------------
+  caddy-cert-publisher:
+    image: alpine:3.20
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        SRC=/caddy-in/caddy/pki/authorities/local/root.crt
+        DST=/caddy-out/caddy-local-ca.crt
+        echo "waiting for Caddy local CA root cert at $$SRC..."
+        for i in $$(seq 1 60); do
+          if [ -f "$$SRC" ]; then
+            cp "$$SRC" "$$DST"
+            chmod 0644 "$$DST"
+            echo "published Caddy local CA root to $$DST"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "ERROR: timed out waiting for Caddy local CA root after 60s" >&2
+        exit 1
+    volumes:
+      - caddy_data:/caddy-in:ro
+      - caddy_ca_export:/caddy-out
+    depends_on:
+      caddy:
+        condition: service_healthy
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # Postgres — Keycloak's persistence layer.
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD:?KC_DB_PASSWORD must be set in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - apokryphos
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # Keycloak — OIDC IdP. Pinned to the 26.6 minor stream (first line with
+  # documented RFC 9449 DPoP support).
+  # --------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      # ── Bootstrap admin (master realm). Rotate after first login. ──────
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:?set in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set in .env}
+      # ── Persistence ────────────────────────────────────────────────────
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:?set in .env}
+      # ── Public hostname. The issuer in tokens (`iss` claim) is derived
+      #    from this. apokryphos-server's `issuer_url` MUST match exactly,
+      #    otherwise openidconnect's discovery validation fails. ─────────
+      KC_HOSTNAME: https://auth.apokryphos.local
+      KC_HOSTNAME_STRICT: "false"  # start-dev MVP convenience; flip for prod
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      # ── Feature flags ──────────────────────────────────────────────────
+      # DPoP is shipped in 26.6 but the per-client toggle is gated behind
+      # this feature flag. Without it, realm imports still succeed but
+      # the admin UI hides the DPoP toggle, confusing operators later.
+      KC_FEATURES: dpop
+      KC_LOG_LEVEL: INFO
+    volumes:
+      # Pre-import both realms at first boot. The `--import-realm` flag is
+      # idempotent: re-imports are no-ops if the realm already exists,
+      # which keeps `docker compose up` cheap on restarts.
+      - ./keycloak/vault-realm.json:/opt/keycloak/data/import/vault-realm.json:ro
+      - ./keycloak/apok-admin-realm.json:/opt/keycloak/data/import/apok-admin-realm.json:ro
+    networks:
+      - apokryphos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+    healthcheck:
+      # Use the public 8080 endpoint's master discovery doc as a liveness
+      # signal. Keycloak emits a small startup banner ~30s in; we give it
+      # 90s to be safe on cold boots.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /realms/master/.well-known/openid-configuration HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200 OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  # --------------------------------------------------------------------------
+  # apokryphos-server — the FAPI 2.0 + DPoP resource server.
+  # --------------------------------------------------------------------------
+  apokryphos-server:
+    build:
+      # Build context = repo root so the Dockerfile can COPY `server/`.
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      APOK_CONFIG_PATH: /etc/apokryphos/apokryphos.toml
+      # Extra root CA loaded explicitly by the OIDC HTTP client (see
+      # server/src/app.rs). The default rustls trust store baked into
+      # reqwest is `webpki-roots` — a static Mozilla root bundle that
+      # ignores SSL_CERT_FILE and the system trust store entirely, so
+      # private CAs like Caddy's `tls internal` local CA must be loaded
+      # via this app-level env var. The OIDC client trust set becomes
+      # `Mozilla roots + this one cert`. For production with a publicly-
+      # trusted IdP (e.g. Let's Encrypt cert on Caddy), simply unset this
+      # variable — the default Mozilla roots are sufficient.
+      APOK_EXTRA_CA_CERT_FILE: /etc/ssl/caddy/caddy-local-ca.crt
+      RUST_LOG: info
+    volumes:
+      - ./apokryphos.toml:/etc/apokryphos/apokryphos.toml:ro
+      # Persistent block storage. The Dockerfile creates the dir owned by
+      # uid 10001; the named volume preserves ownership.
+      - apokryphos_blocks:/var/lib/apokryphos/blocks
+      # CA root cert published by caddy-cert-publisher (mode 0644).
+      - caddy_ca_export:/etc/ssl/caddy:ro
+    networks:
+      - apokryphos
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      caddy-cert-publisher:
+        condition: service_completed_successfully
+    logging: *default-logging
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  apokryphos:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_ca_export:
+  postgres_data:
+  apokryphos_blocks:

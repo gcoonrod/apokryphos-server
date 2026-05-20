@@ -1,0 +1,72 @@
+# apokryphos-server config for the homelab reference deployment.
+#
+# Copy to `apokryphos.toml` in this directory; compose mounts the live
+# file (not this `.example`) into the apokryphos-server container at
+# `/etc/apokryphos/apokryphos.toml`.
+#
+# Config layering precedence (highest first): APOK_* env vars > this
+# TOML file > built-in defaults. See server/src/config/ for the full
+# schema; every key documented below has an APOK_<UPPERCASE> env-var
+# equivalent.
+
+# ─── Networking ────────────────────────────────────────────────────────────
+# Bind on all interfaces inside the container. The host port mapping is
+# governed by deploy/compose.yaml (Caddy reverse-proxies to this).
+bind_address = "0.0.0.0:8443"
+
+# Trusted reverse-proxy CIDR ranges. The Docker compose default-bridge
+# network gives Caddy an IP in the 172.16.0.0/12 family. Adding 10.0.0.0/8
+# covers user-defined networks too. Tighten this if you know the exact
+# subnet your `apokryphos` network was assigned (`docker network inspect
+# apokryphos_apokryphos` shows it).
+trusted_proxies = ["172.16.0.0/12", "10.0.0.0/8"]
+
+# Graceful-shutdown drain timeout. On SIGTERM the server stops accepting
+# new connections and waits up to this many seconds for in-flight
+# requests to complete before forcing close.
+drain_timeout_secs = 30
+
+# ─── Storage backend ───────────────────────────────────────────────────────
+storage_backend = "local_fs"
+
+[storage.local_fs]
+# Block storage root. Must be an absolute path inside the container.
+# The Dockerfile creates this directory owned by the apokryphos user
+# (uid 10001); deploy/compose.yaml mounts the named volume
+# `apokryphos_blocks` here for persistence.
+root = "/var/lib/apokryphos/blocks"
+
+# Fixed cypher-block size. Clients pad/encrypt to exactly this size
+# before PUT; the server refuses PUTs of any other size. 4 MiB is the
+# Phase 4 default and matches the Spec FR-002 value.
+block_size_bytes = 4194304
+
+# ─── OIDC: vault audience ──────────────────────────────────────────────────
+# Tokens issued by Keycloak's `vault` realm (see deploy/keycloak/vault-
+# realm.json). The issuer_url MUST match what Keycloak puts in `iss`
+# claims, which is derived from KC_HOSTNAME + `/realms/<name>`.
+[vault_oidc]
+issuer_url = "https://auth.apokryphos.local/realms/vault"
+audience   = "apokryphos-vault"
+
+# ─── OIDC: admin audience ──────────────────────────────────────────────────
+# Disjoint from the vault realm: independent realm = independent JWKS,
+# which satisfies FR-006 (apokryphos-server refuses to start if the two
+# realms share a signing key id).
+[admin_oidc]
+issuer_url = "https://auth.apokryphos.local/realms/apok-admin"
+audience   = "apokryphos-admin"
+
+# ─── Phase 3 auth tuning (optional) ────────────────────────────────────────
+# All defaults are sensible for a homelab. Uncomment + edit if you have
+# a reason to deviate. See server/src/config/server_config.rs:AuthConfig
+# for the full rationale per field.
+#
+# [auth]
+# clock_skew_secs = 60                       # max clock skew vs IdP
+# dpop_freshness_secs = 30                   # DPoP proof iat freshness window
+# jwks_refresh_secs = 3600                   # scheduled JWKS refresh interval
+# discovery_refresh_secs = 86400             # OIDC discovery refresh interval
+# on_demand_refresh_min_interval_secs = 30   # rate-limit on-demand JWKS refresh
+# jti_replay_window_secs = 90                # must be >= dpop_freshness + clock_skew
+# max_replay_entries = 100000                # memory budget for jti replay store
