@@ -70,10 +70,18 @@ auth.apokryphos.lab {
 
 	# Strong baseline HTTP security headers. Keycloak already sets some
 	# of these; setting them at the proxy is belt-and-suspenders.
+	#
+	# X-Frame-Options is SAMEORIGIN (not DENY) here because Keycloak's
+	# admin SPA loads its own session-monitor iframe (advertised in the
+	# OIDC discovery doc as `check_session_iframe`, served from this
+	# same origin) and its multi-step onboarding wizard uses same-
+	# origin frames internally. DENY blocks ALL framing — including
+	# same-origin — which breaks the admin console with an opaque
+	# `(blocked:origin)` fetch error on first load.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
+		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "interest-cohort=()"
 		-Server
