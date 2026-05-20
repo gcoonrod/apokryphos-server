@@ -139,26 +139,26 @@ pub async fn run() -> Result<(), AppError> {
     // Operator-supplied extra root CA. Required when the OIDC issuer is
     // fronted by a TLS terminator using a private CA (e.g. the homelab
     // `deploy/` reference uses Caddy's `tls internal`). The default rustls
-    // trust store baked into reqwest (via webpki-roots) is a static Mozilla
-    // root bundle that ignores SSL_CERT_FILE and the system trust store,
-    // so a private-CA chain has to be loaded explicitly here. Unset →
-    // default Mozilla roots, suitable for any publicly-trusted issuer.
-    if let Some(path) = std::env::var_os("APOK_EXTRA_CA_CERT_FILE") {
-        let pem = std::fs::read(&path).map_err(|e| {
-            AppError::Auth(format!(
-                "failed to read APOK_EXTRA_CA_CERT_FILE={}: {e}",
-                std::path::Path::new(&path).display()
-            ))
-        })?;
+    // trust store baked into reqwest (via webpki-roots) is a static
+    // Mozilla root bundle that ignores SSL_CERT_FILE and the system trust
+    // store, so a private-CA chain has to be loaded explicitly here.
+    // Unset → default Mozilla roots, suitable for any publicly-trusted
+    // issuer. The PEM bytes are read by `config::extra_ca` (the only
+    // module allowed to touch the filesystem outside `storage::`,
+    // FR-012); PEM parsing happens here because `reqwest::Certificate`
+    // is a TLS type that doesn't belong in `config::`.
+    if let Some((path, pem)) = config::extra_ca::load_optional_pem()
+        .map_err(|e| AppError::Auth(format!("loading APOK_EXTRA_CA_CERT_FILE: {e}")))?
+    {
         let cert = openidconnect::reqwest::Certificate::from_pem(&pem).map_err(|e| {
             AppError::Auth(format!(
                 "failed to parse APOK_EXTRA_CA_CERT_FILE={} as PEM: {e}",
-                std::path::Path::new(&path).display()
+                path.display()
             ))
         })?;
         http_client_builder = http_client_builder.add_root_certificate(cert);
         tracing::info!(
-            path = %std::path::Path::new(&path).display(),
+            path = %path.display(),
             "OIDC HTTP client trust: added extra root CA"
         );
     }
