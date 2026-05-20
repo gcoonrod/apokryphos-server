@@ -8,9 +8,9 @@ starting point — not a hardened production configuration.
 ## What you get
 
 ```
-                    ┌─── auth.apokryphos.local ──→ Keycloak (vault + apok-admin realms)
+                    ┌─── auth.apokryphos.lab ──→ Keycloak (vault + apok-admin realms)
 host :443 ─→ Caddy ─┤
-                    └─── api.apokryphos.local  ──→ apokryphos-server
+                    └─── api.apokryphos.lab  ──→ apokryphos-server
 ```
 
 Five containers on one Docker network: Caddy (TLS terminator), Keycloak
@@ -28,7 +28,10 @@ brute-force protection, and one stub SPA client per realm. See
 
 - Docker Engine 26+ and the Compose v2 plugin (`docker compose version`)
 - ~2 GB free RAM (Keycloak alone wants ~1 GB)
-- The ability to edit your `/etc/hosts` (or your local DNS)
+- A way to resolve two FQDNs (`auth.apokryphos.lab`, `api.apokryphos.lab`)
+  to the Docker host — LAN DNS (Pi-hole / router) recommended for
+  multi-device homelabs; `/etc/hosts` works for single-host setups.
+  See [§2 Resolve the homelab hostnames](#2-resolve-the-homelab-hostnames).
 
 ## First boot
 
@@ -52,17 +55,77 @@ first login.
 ### 2. Resolve the homelab hostnames
 
 The compose stack uses two FQDNs:
-- `auth.apokryphos.local` — Keycloak
-- `api.apokryphos.local` — apokryphos-server
+- `auth.apokryphos.lab` — Keycloak
+- `api.apokryphos.lab` — apokryphos-server
 
-Add them to your `/etc/hosts`:
+Both must resolve to the Docker host's IP from every client that talks
+to the stack (your laptop, your phone, the Docker host itself).
+
+> **Why `.lab` and not `.local`?** `.local` is reserved for mDNS
+> (RFC 6762). macOS, iOS, and most modern Linux distros route `.local`
+> queries through mDNS responders *before* any regular DNS query goes
+> out, which makes `/etc/hosts` and LAN DNS work inconsistently across
+> devices. `.lab` is unregistered, conventional for homelab use, and
+> behaves like a normal DNS name everywhere.
+
+Pick one of the resolution strategies below. Caddy binds to
+`0.0.0.0:80` and `0.0.0.0:443` on the host (compose `ports: "443:443"`
+publishes both interfaces by default), so the *network path* to LAN
+clients already works — this section only governs **name resolution**.
+
+If you run a host firewall (`ufw` / `firewalld` / `nftables`), allow
+inbound 80 + 443 from your LAN subnet.
+
+#### Option A: LAN-wide DNS via Pi-hole (recommended for multi-device homelabs)
+
+Admin UI → Settings → Local DNS Records, add two entries pointing at
+the Docker host's LAN IP:
+
+| Domain                | IP                          |
+|-----------------------|-----------------------------|
+| `auth.apokryphos.lab` | `192.168.X.Y` (host LAN IP) |
+| `api.apokryphos.lab`  | `192.168.X.Y` (host LAN IP) |
+
+CLI equivalent — append to `/etc/pihole/custom.list`, then
+`pihole restartdns`. Any LAN device using Pi-hole as its resolver
+picks this up immediately.
+
+The same shape works for OPNsense, pfSense, OpenWrt, Asus Merlin, and
+most other router firmwares that expose a "DNS overrides" / "Local
+hosts" screen.
+
+#### Option B: dnsmasq on the Docker host
+
+If you don't run Pi-hole but want LAN-wide resolution, install dnsmasq
+on the Docker host and point clients at it:
+
+```bash
+# Arch
+sudo pacman -S dnsmasq
+sudo tee /etc/dnsmasq.d/apokryphos.conf >/dev/null <<'EOF'
+address=/auth.apokryphos.lab/192.168.X.Y
+address=/api.apokryphos.lab/192.168.X.Y
+EOF
+sudo systemctl enable --now dnsmasq
+```
+
+Then either set each LAN client's resolver to the Docker host
+statically, or push it via your router's DHCP options.
+
+#### Option C: per-client `/etc/hosts` (single-host quick start)
+
+Works for the Docker host plus one or two dev machines. Doesn't scale
+to phones or many devices — most mobile OSes won't let you edit
+`hosts` without rooting.
+
+On each client:
 
 ```
-127.0.0.1   auth.apokryphos.local api.apokryphos.local
+192.168.X.Y   auth.apokryphos.lab api.apokryphos.lab
 ```
 
-(Or configure your local DNS — dnsmasq, Pi-hole, etc. — to map these
-to the host running compose.)
+On the Docker host *specifically*, you can substitute `127.0.0.1` for
+the LAN IP — the loopback path works since Caddy binds both interfaces.
 
 ### 3. Materialize the live config
 
@@ -98,31 +161,73 @@ You're looking for:
 If apokryphos-server logs a startup error mentioning "issuer URL" or
 "discovery" or "JWKS", see [Troubleshooting](#troubleshooting) below.
 
-### 5. Trust the Caddy local CA in your browser
+### 5. Trust the Caddy local CA on every client device
 
-Caddy generates a self-signed CA root on first boot. To avoid a
-browser warning on every visit, import it as a trusted root:
+Caddy generates a self-signed CA root the first time it boots. Every
+device that opens `https://auth.apokryphos.lab` or hits the API needs
+that root in its trust store — otherwise browsers show a warning and
+non-browser clients (curl, mobile apps) refuse the TLS handshake.
+
+#### Extract the root cert
+
+The `caddy-cert-publisher` one-shot service already writes the root to
+a host-mounted volume during first boot. Pull a copy onto the Docker
+host:
 
 ```bash
-# Extract Caddy's local CA root
-docker compose exec -u root caddy cat /data/caddy/pki/authorities/local/root.crt > caddy-local-ca.crt
+# From the Docker host
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-local-ca.crt
 ```
 
-Then in your browser:
-- **Firefox**: Settings → Privacy & Security → View Certificates →
-  Authorities → Import → select `caddy-local-ca.crt` → check "Trust this
-  CA to identify websites".
-- **Chrome/Edge**: System keychain (macOS Keychain Access /
-  Windows MMC certmgr.msc / Linux `update-ca-certificates` after copying
-  to `/usr/local/share/ca-certificates/`).
+#### Distribute it to each LAN client
 
-For production, replace the `tls internal` directive in
-[`caddy/Caddyfile`](./caddy/Caddyfile) with a real CA (Let's Encrypt
-or Tailscale-issued certs); the file has commented stubs showing how.
+Copy `caddy-local-ca.crt` to every device that talks to the stack
+(scp, AirDrop, a shared drive, an internal HTTPS download from the
+host — whatever fits). Then install it per-OS:
+
+**Linux (Arch / Fedora / RHEL — `p11-kit`):**
+```bash
+sudo trust anchor --store caddy-local-ca.crt
+```
+
+**Linux (Debian / Ubuntu):**
+```bash
+sudo cp caddy-local-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+```
+
+**macOS:**
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain caddy-local-ca.crt
+```
+Or interactively: Keychain Access → System keychain → drag the cert
+in, then double-click → expand "Trust" → set "When using this
+certificate" to "Always Trust".
+
+**iOS:** AirDrop or email the `.crt` file to the device, tap it, then
+Settings → General → VPN & Device Management → install the profile.
+Finally enable trust under Settings → General → About → Certificate
+Trust Settings.
+
+**Android:** Settings → Security → Encryption & credentials → Install
+a certificate → CA certificate.
+
+**Firefox** (uses its own trust store on every OS): Settings → Privacy
+& Security → Certificates → View Certificates → Authorities → Import
+→ check "Trust this CA to identify websites".
+
+#### Production alternative
+
+For internet-facing or "I never want to manually install certs again"
+deployments, swap `tls internal` in [`caddy/Caddyfile`](./caddy/Caddyfile)
+for Let's Encrypt or a Tailscale-issued cert. Public CAs are already
+trusted by every device out of the box, so the per-device install
+step disappears. Commented stubs in the Caddyfile show both paths.
 
 ### 6. Create your first vault user
 
-Visit `https://auth.apokryphos.local/admin` and sign in with the
+Visit `https://auth.apokryphos.lab/admin` and sign in with the
 bootstrap admin credentials from `.env`.
 
 1. **Switch to the `vault` realm** (top-left realm dropdown).
@@ -131,7 +236,7 @@ bootstrap admin credentials from `.env`.
 4. Authentication → Required actions → ensure "Configure OTP" is
    enabled.
 5. Have the user sign in for the first time at
-   `https://auth.apokryphos.local/realms/vault/account` and enroll
+   `https://auth.apokryphos.lab/realms/vault/account` and enroll
    TOTP/WebAuthn.
 
 ### 7. Verify apokryphos-server end-to-end
@@ -140,7 +245,7 @@ The fastest sanity check: hit the server's authenticated probe.
 
 ```bash
 # Without a token — expect a byte-identical 401
-curl -i --cacert caddy-local-ca.crt https://api.apokryphos.local/api/whoami
+curl -i --cacert caddy-local-ca.crt https://api.apokryphos.lab/api/whoami
 
 # Expected: HTTP/2 401, body is exactly the 401 wire-image apokryphos-
 # server emits (see server/tests/uniform_401_response.rs for the
@@ -215,13 +320,13 @@ docker compose down -v
 The issuer URL in `apokryphos.toml` must match what Keycloak puts in
 the `iss` claim of tokens. That's controlled by Keycloak's
 `KC_HOSTNAME` env var (set in `compose.yaml` to
-`https://auth.apokryphos.local`) and the realm name. If you changed
+`https://auth.apokryphos.lab`) and the realm name. If you changed
 either, both sides must agree.
 
 Quick check:
 
 ```bash
-curl --cacert caddy-local-ca.crt https://auth.apokryphos.local/realms/vault/.well-known/openid-configuration | python3 -m json.tool | grep issuer
+curl --cacert caddy-local-ca.crt https://auth.apokryphos.lab/realms/vault/.well-known/openid-configuration | python3 -m json.tool | grep issuer
 ```
 
 That value MUST equal the `issuer_url` in `apokryphos.toml`.
@@ -272,7 +377,7 @@ correct and the host's `:443` is mapped to the container.
 
 ## What's intentionally not included
 
-- **HTTPS for `api.apokryphos.local` to apokryphos-server**: Caddy
+- **HTTPS for `api.apokryphos.lab` to apokryphos-server**: Caddy
   proxies plain HTTP to `apokryphos-server:8443` because the
   intra-network traffic is on a Docker bridge. If you want
   defense-in-depth in-network TLS, add a self-signed cert to

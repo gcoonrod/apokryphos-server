@@ -136,11 +136,11 @@
       "protocol": "openid-connect",
       "redirectUris": [
         "http://localhost:5173/*",
-        "https://api.apokryphos.local/*"
+        "https://api.apokryphos.lab/*"
       ],
       "webOrigins": [
         "http://localhost:5173",
-        "https://api.apokryphos.local"
+        "https://api.apokryphos.lab"
       ],
       "attributes": {
         "dpop.bound.access.tokens": "true",

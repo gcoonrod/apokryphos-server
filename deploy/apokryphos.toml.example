@@ -49,7 +49,7 @@ root = "/var/lib/apokryphos/blocks"
 # realm.json). The issuer_url MUST match what Keycloak puts in `iss`
 # claims, which is derived from KC_HOSTNAME + `/realms/<name>`.
 [vault_oidc]
-issuer_url = "https://auth.apokryphos.local/realms/vault"
+issuer_url = "https://auth.apokryphos.lab/realms/vault"
 audience   = "apokryphos-vault"
 
 # ─── OIDC: admin audience ──────────────────────────────────────────────────
@@ -57,7 +57,7 @@ audience   = "apokryphos-vault"
 # which satisfies FR-006 (apokryphos-server refuses to start if the two
 # realms share a signing key id).
 [admin_oidc]
-issuer_url = "https://auth.apokryphos.local/realms/apok-admin"
+issuer_url = "https://auth.apokryphos.lab/realms/apok-admin"
 audience   = "apokryphos-admin"
 
 # ─── Phase 3 auth tuning (optional) ────────────────────────────────────────
