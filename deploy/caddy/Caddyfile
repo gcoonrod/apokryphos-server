@@ -1,8 +1,8 @@
 # Caddyfile for the apokryphos homelab reference deployment.
 #
 # Routes:
-#   auth.apokryphos.local  ->  keycloak:8080   (OIDC IdP)
-#   api.apokryphos.local   ->  apokryphos-server:8443 (FAPI 2.0 resource server)
+#   auth.apokryphos.lab  ->  keycloak:8080   (OIDC IdP)
+#   api.apokryphos.lab   ->  apokryphos-server:8443 (FAPI 2.0 resource server)
 #   /healthz on :80        ->  204 No Content  (compose healthcheck target)
 #
 # TLS strategy:
@@ -25,7 +25,7 @@
 	# applies to Let's Encrypt issuance; the placeholder below is
 	# ignored under `tls internal` and only matters when you graduate
 	# to a real CA.
-	email admin@apokryphos.local
+	email admin@apokryphos.lab
 	# Set a non-default servers port if you're behind another reverse
 	# proxy; default 443 + 80 is fine for the homelab compose stack.
 }
@@ -63,9 +63,9 @@
 }
 
 # ---------------------------------------------------------------------------
-# auth.apokryphos.local — Keycloak (OIDC IdP)
+# auth.apokryphos.lab — Keycloak (OIDC IdP)
 # ---------------------------------------------------------------------------
-auth.apokryphos.local {
+auth.apokryphos.lab {
 	tls internal
 
 	# Strong baseline HTTP security headers. Keycloak already sets some
@@ -86,9 +86,9 @@ auth.apokryphos.local {
 }
 
 # ---------------------------------------------------------------------------
-# api.apokryphos.local — apokryphos-server (resource server)
+# api.apokryphos.lab — apokryphos-server (resource server)
 # ---------------------------------------------------------------------------
-api.apokryphos.local {
+api.apokryphos.lab {
 	tls internal
 
 	header {
@@ -116,7 +116,7 @@ api.apokryphos.local {
 # ---------------------------------------------------------------------------
 
 # ── Let's Encrypt with a real domain ──────────────────────────────────────
-# Replace `auth.apokryphos.local` above with your real hostname (e.g.
+# Replace `auth.apokryphos.lab` above with your real hostname (e.g.
 # `auth.example.com`) and drop the `tls internal` line — Caddy's default
 # automatic HTTPS uses ACME (Let's Encrypt) when the hostname is not a
 # private TLD. The `email` directive in the global block above is the

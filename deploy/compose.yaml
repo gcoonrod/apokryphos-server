@@ -2,8 +2,8 @@
 #
 # Five services on a single Docker network:
 #   - caddy                — TLS termination (Caddy local CA for MVP);
-#                            reverse-proxies auth.apokryphos.local -> keycloak
-#                            and api.apokryphos.local -> apokryphos-server.
+#                            reverse-proxies auth.apokryphos.lab -> keycloak
+#                            and api.apokryphos.lab -> apokryphos-server.
 #   - caddy-cert-publisher — one-shot helper that publishes Caddy's local-CA
 #                            root cert to a separate volume in a mode the
 #                            non-root apokryphos-server user can read.
@@ -14,13 +14,16 @@
 #
 # First boot:
 #   1. cp .env.example .env  and edit the secrets.
-#   2. Add `127.0.0.1 auth.apokryphos.local api.apokryphos.local` to the
-#      host's /etc/hosts (or your local DNS) so the names resolve.
+#   2. Resolve `auth.apokryphos.lab` + `api.apokryphos.lab` to the
+#      Docker host's IP. Pi-hole / router DNS overrides are
+#      recommended for multi-device LAN access; `/etc/hosts` works
+#      for single-host setups. See deploy/README.md §2 for the full
+#      breakdown (including why `.local` is deliberately avoided).
 #   3. `docker compose up -d`
-#   4. Visit https://auth.apokryphos.local/admin (accept the Caddy local-CA
-#      cert in your browser; see deploy/README.md §"Trust the Caddy local
-#      CA in your browser" for importing the CA) and sign in with
-#      KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD from .env.
+#   4. Visit https://auth.apokryphos.lab/admin (accept the Caddy local-CA
+#      cert in your browser; see deploy/README.md §5 "Trust the Caddy
+#      local CA on every client device" for the per-OS install steps)
+#      and sign in with KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD from .env.
 #   5. Both realms (`vault`, `apok-admin`) are pre-imported. Create a user
 #      in the `vault` realm; enroll TOTP/WebAuthn.
 #   6. `docker compose logs apokryphos-server` should show "OIDC contexts
@@ -68,8 +71,8 @@ services:
         # same FQDNs that Keycloak puts in token `iss` claims, which is
         # required for openidconnect discovery validation to succeed.
         aliases:
-          - auth.apokryphos.local
-          - api.apokryphos.local
+          - auth.apokryphos.lab
+          - api.apokryphos.lab
     logging: *default-logging
     healthcheck:
       test: ["CMD", "wget", "-qO-", "--no-check-certificate", "http://localhost:80/healthz"]
@@ -166,7 +169,7 @@ services:
       # ── Public hostname. The issuer in tokens (`iss` claim) is derived
       #    from this. apokryphos-server's `issuer_url` MUST match exactly,
       #    otherwise openidconnect's discovery validation fails. ─────────
-      KC_HOSTNAME: https://auth.apokryphos.local
+      KC_HOSTNAME: https://auth.apokryphos.lab
       KC_HOSTNAME_STRICT: "false"  # start-dev MVP convenience; flip for prod
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"

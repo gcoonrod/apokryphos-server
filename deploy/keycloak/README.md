@@ -68,7 +68,7 @@ them via the admin UI should be aware these are load-bearing.
 
 These need to happen manually after first boot via the Keycloak admin UI:
 
-- **Create users.** Visit `https://auth.apokryphos.local/admin` → vault
+- **Create users.** Visit `https://auth.apokryphos.lab/admin` → vault
   realm → Users → Add user. Enroll TOTP / WebAuthn from the user UI
   after the first login.
 - **Set realm hostname / email server.** The defaults work for
@@ -76,7 +76,7 @@ These need to happen manually after first boot via the Keycloak admin UI:
   brand colors, and an SMTP server for password reset emails.
 - **Customize redirect URIs.** Both stub clients ship with
   `http://localhost:{5173,5174}/*` for local dev plus
-  `https://api.apokryphos.local/*` placeholders. Replace these with
+  `https://api.apokryphos.lab/*` placeholders. Replace these with
   your real SPA origins before going past localhost development.
 
 ## Updating a running realm
