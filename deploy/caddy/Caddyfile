@@ -49,9 +49,17 @@
 # `localhost` inside the container resolves to the :80 listener).
 # ---------------------------------------------------------------------------
 :80 {
-	@healthz path /healthz
-	respond @healthz 204
-	redir /* https://{host}{uri} permanent
+	# `handle` blocks are mutually exclusive: Caddy enters exactly one.
+	# That gives us deterministic source-order routing here — without
+	# them, Caddy's implicit directive ordering runs `redir` before
+	# `respond`, which makes /healthz redirect to https and breaks the
+	# compose healthcheck.
+	handle /healthz {
+		respond 204
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
 }
 
 # ---------------------------------------------------------------------------

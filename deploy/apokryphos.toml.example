@@ -29,17 +29,20 @@ drain_timeout_secs = 30
 # ─── Storage backend ───────────────────────────────────────────────────────
 storage_backend = "local_fs"
 
+# Fixed cypher-block size. Clients pad/encrypt to exactly this size
+# before PUT; the server refuses PUTs of any other size. 4 MiB is the
+# Phase 4 default and matches the Spec FR-002 value. Top-level scalar —
+# MUST appear before the `[storage.local_fs]` table header below,
+# otherwise TOML scopes it inside that table and the server rejects it
+# at startup.
+block_size_bytes = 4194304
+
 [storage.local_fs]
 # Block storage root. Must be an absolute path inside the container.
 # The Dockerfile creates this directory owned by the apokryphos user
 # (uid 10001); deploy/compose.yaml mounts the named volume
 # `apokryphos_blocks` here for persistence.
 root = "/var/lib/apokryphos/blocks"
-
-# Fixed cypher-block size. Clients pad/encrypt to exactly this size
-# before PUT; the server refuses PUTs of any other size. 4 MiB is the
-# Phase 4 default and matches the Spec FR-002 value.
-block_size_bytes = 4194304
 
 # ─── OIDC: vault audience ──────────────────────────────────────────────────
 # Tokens issued by Keycloak's `vault` realm (see deploy/keycloak/vault-
