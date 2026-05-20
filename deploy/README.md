@@ -188,8 +188,11 @@ Two volumes hold persistent state:
 - `apokryphos_postgres_data` — Keycloak's realm + user database
 - `apokryphos_apokryphos_blocks` — cypher-block storage
 
-Stop the stack and use `docker run --rm -v <volume>:/data -v $(pwd):/backup
-alpine tar -czf /backup/<volume>.tar.gz -C /data .`.
+Stop the stack and run, for each volume:
+
+```bash
+docker run --rm -v <volume>:/data -v "$(pwd):/backup" alpine tar -czf /backup/<volume>.tar.gz -C /data .
+```
 
 ### Tear down (keeping data)
 

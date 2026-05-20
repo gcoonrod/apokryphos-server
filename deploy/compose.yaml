@@ -208,12 +208,16 @@ services:
     restart: unless-stopped
     environment:
       APOK_CONFIG_PATH: /etc/apokryphos/apokryphos.toml
-      # SSL_CERT_FILE makes the openidconnect TLS client trust ONLY the
-      # Caddy local CA. This is intentional in the homelab MVP: we want
-      # apokryphos-server to refuse to talk to any IdP except the one
-      # behind our own Caddy. For production with a public CA, unset this
-      # so the default system trust store is used.
-      SSL_CERT_FILE: /etc/ssl/caddy/caddy-local-ca.crt
+      # Extra root CA loaded explicitly by the OIDC HTTP client (see
+      # server/src/app.rs). The default rustls trust store baked into
+      # reqwest is `webpki-roots` — a static Mozilla root bundle that
+      # ignores SSL_CERT_FILE and the system trust store entirely, so
+      # private CAs like Caddy's `tls internal` local CA must be loaded
+      # via this app-level env var. The OIDC client trust set becomes
+      # `Mozilla roots + this one cert`. For production with a publicly-
+      # trusted IdP (e.g. Let's Encrypt cert on Caddy), simply unset this
+      # variable — the default Mozilla roots are sufficient.
+      APOK_EXTRA_CA_CERT_FILE: /etc/ssl/caddy/caddy-local-ca.crt
       RUST_LOG: info
     volumes:
       - ./apokryphos.toml:/etc/apokryphos/apokryphos.toml:ro

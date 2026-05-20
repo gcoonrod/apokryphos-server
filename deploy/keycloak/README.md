@@ -14,8 +14,9 @@ idempotent — re-imports are no-ops if the realm already exists, so
 
 `vault` and `apok-admin` are cryptographically isolated by realm — each
 gets its own key set, satisfying apokryphos-server's FR-006 disjoint
-JWKS startup invariant for free (verified empirically; see
-`memory/project_oidc_provider_choice.md`).
+JWKS startup invariant for free (verified empirically by JWKS `kid`-set
+diff against a live Keycloak 26.6 instance during the design phase of
+this deployment reference).
 
 ## What the realms configure
 

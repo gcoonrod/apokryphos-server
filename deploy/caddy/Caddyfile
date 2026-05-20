@@ -30,15 +30,26 @@
 }
 
 # ---------------------------------------------------------------------------
-# /healthz on plain HTTP — used by the compose healthcheck.
-# Bound to localhost (the in-container interface) so it isn't exposed
-# publicly via the :80 port mapping.
+# Plain HTTP listener.
+#
+# `:80` binds on all interfaces inside the container, and compose's
+# `ports: "80:80"` publishes it to the host's 0.0.0.0:80 — so the routes
+# below ARE reachable from anywhere the host is. That is intentional:
+#
+#   - `/healthz` returns a public unauthenticated 204. It leaks no data
+#     and serves as the compose healthcheck target (`wget` from inside
+#     the container) AND any external uptime probe.
+#   - Every other path on :80 redirects to https://{host}{uri}, which is
+#     standard Caddy behavior but spelled out here so the intent is
+#     unambiguous.
+#
+# If you want /healthz to be in-container-only, drop the `"80:80"`
+# publish in `compose.yaml` (the healthcheck still works because
+# `localhost` inside the container resolves to the :80 listener).
 # ---------------------------------------------------------------------------
 :80 {
 	@healthz path /healthz
 	respond @healthz 204
-	# Everything else on :80 redirects to https — standard Caddy
-	# behavior, but spelled out for clarity.
 	redir /* https://{host}{uri} permanent
 }
 

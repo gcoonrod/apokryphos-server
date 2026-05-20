@@ -132,9 +132,38 @@ pub async fn run() -> Result<(), AppError> {
     //      URL. Disabling redirects entirely is the simplest defence:
     //      a legitimate OIDC provider should not be issuing redirects
     //      from these endpoints in the first place.
-    let http_client = openidconnect::reqwest::Client::builder()
+    let mut http_client_builder = openidconnect::reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .redirect(openidconnect::reqwest::redirect::Policy::none());
+
+    // Operator-supplied extra root CA. Required when the OIDC issuer is
+    // fronted by a TLS terminator using a private CA (e.g. the homelab
+    // `deploy/` reference uses Caddy's `tls internal`). The default rustls
+    // trust store baked into reqwest (via webpki-roots) is a static Mozilla
+    // root bundle that ignores SSL_CERT_FILE and the system trust store,
+    // so a private-CA chain has to be loaded explicitly here. Unset →
+    // default Mozilla roots, suitable for any publicly-trusted issuer.
+    if let Some(path) = std::env::var_os("APOK_EXTRA_CA_CERT_FILE") {
+        let pem = std::fs::read(&path).map_err(|e| {
+            AppError::Auth(format!(
+                "failed to read APOK_EXTRA_CA_CERT_FILE={}: {e}",
+                std::path::Path::new(&path).display()
+            ))
+        })?;
+        let cert = openidconnect::reqwest::Certificate::from_pem(&pem).map_err(|e| {
+            AppError::Auth(format!(
+                "failed to parse APOK_EXTRA_CA_CERT_FILE={} as PEM: {e}",
+                std::path::Path::new(&path).display()
+            ))
+        })?;
+        http_client_builder = http_client_builder.add_root_certificate(cert);
+        tracing::info!(
+            path = %std::path::Path::new(&path).display(),
+            "OIDC HTTP client trust: added extra root CA"
+        );
+    }
+
+    let http_client = http_client_builder
         .build()
         .map_err(|e| AppError::Auth(format!("failed to build OIDC HTTP client: {e}")))?;
     let (vault_ctx, admin_ctx) = crate::auth::context::init_contexts(&cfg, &http_client)
