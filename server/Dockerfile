@@ -35,14 +35,22 @@ WORKDIR /build
 # a stub-compile pattern; for a homelab reference Dockerfile, the
 # fetch-only caching is good enough.
 COPY server/Cargo.toml server/Cargo.lock ./
-# Touch a stub main.rs so `cargo fetch` succeeds without the real source.
+# Bring in the test files BEFORE `cargo fetch`. Cargo parses the full
+# manifest and validates every `[[test]] path = "..."` exists, even
+# under `cargo fetch` (which only downloads to the registry — no build).
+# The workspace-level conformance test at server/Cargo.toml's
+# `path = "../tests/conformance/main.rs"` requires `tests/conformance/`
+# at the build root too, so we copy both trees.
+COPY server/tests ./tests
+COPY tests /tests
+# Stub `src/main.rs` so the manifest parse + fetch succeeds without the
+# real source. The real `src/` is copied in the next layer.
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && \
     cargo fetch --locked
 
 # Now bring in the real source. The registry-download layer above
-# stays cached as long as Cargo.toml + Cargo.lock are unchanged.
+# stays cached as long as Cargo.{toml,lock} and `tests/` are unchanged.
 COPY server/src ./src
-COPY server/tests ./tests
 
 # Production build — NO test-utils feature. The release profile inherits
 # the default opt-level (3) + LTO settings from Cargo.toml.
