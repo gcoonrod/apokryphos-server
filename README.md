@@ -10,7 +10,7 @@ This repository is in **Phase 1: scaffolding**. The Rust binary compiles and run
 
 ## Repository layout
 
-- **`server/`** — the Rust API crate plus its production `Dockerfile`. A single statically linked binary is produced for deployment.
+- **`server/`** — the Rust API crate plus its production `Dockerfile`. A single binary is produced for deployment (glibc-linked against `debian:bookworm-slim`; switch to a `*-musl` Rust target if you need a fully static build).
 - **`clients/vault-spa/`** — placeholder for the reference end-user vault SPA.
 - **`clients/admin-spa/`** — placeholder for the administrative management SPA.
 - **`deploy/`** — homelab reference deployment: `docker compose` stack with Caddy, Keycloak 26.6 (FAPI 2.0 + DPoP), Postgres, and apokryphos-server. See `deploy/README.md` for the first-boot walkthrough.

@@ -18,8 +18,9 @@
 #      host's /etc/hosts (or your local DNS) so the names resolve.
 #   3. `docker compose up -d`
 #   4. Visit https://auth.apokryphos.local/admin (accept the Caddy local-CA
-#      cert in your browser; see README §3 for importing the CA) and sign
-#      in with KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD from .env.
+#      cert in your browser; see deploy/README.md §"Trust the Caddy local
+#      CA in your browser" for importing the CA) and sign in with
+#      KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD from .env.
 #   5. Both realms (`vault`, `apok-admin`) are pre-imported. Create a user
 #      in the `vault` realm; enroll TOTP/WebAuthn.
 #   6. `docker compose logs apokryphos-server` should show "OIDC contexts
@@ -92,7 +93,7 @@ services:
   #
   # `apokryphos-server` then waits on `service_completed_successfully`
   # before starting, guaranteeing the cert is available at the path
-  # `SSL_CERT_FILE` points to.
+  # `APOK_EXTRA_CA_CERT_FILE` points to.
   # --------------------------------------------------------------------------
   caddy-cert-publisher:
     image: alpine:3.20

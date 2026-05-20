@@ -11,8 +11,9 @@
 #   /data/caddy/pki/authorities/local/root.crt and signs per-host certs.
 #   - The browser will warn until you import that root cert (see
 #     deploy/README.md §"Importing the Caddy local CA").
-#   - apokryphos-server trusts this root via SSL_CERT_FILE (see
-#     deploy/compose.yaml).
+#   - apokryphos-server trusts this root via APOK_EXTRA_CA_CERT_FILE,
+#     loaded into the OIDC HTTP client at startup (see
+#     deploy/compose.yaml and server/src/config/extra_ca.rs).
 #
 # Production paths (commented stubs further down):
 #   - Let's Encrypt automatic TLS for a real domain (default Caddy behavior).

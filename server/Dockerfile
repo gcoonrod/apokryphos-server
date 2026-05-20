@@ -25,15 +25,22 @@ ARG DEBIAN_VERSION=bookworm-slim
 FROM rust:${RUST_VERSION}-bookworm AS builder
 WORKDIR /build
 
-# Copy the crate manifest + lockfile FIRST so Docker can cache the deps
-# layer across source-only changes.
+# Copy the crate manifest + lockfile FIRST so Docker can cache the
+# crate-registry download (NOT compiled deps — `cargo fetch` only
+# populates ~/.cargo/registry with crate tarballs; dependency
+# compilation happens in the `cargo build` step below alongside
+# application code, so any source change re-triggers it). The cached
+# fetch layer just saves the network round-trip on rebuilds. Operators
+# who want true incremental dep caching can switch to `cargo-chef` or
+# a stub-compile pattern; for a homelab reference Dockerfile, the
+# fetch-only caching is good enough.
 COPY server/Cargo.toml server/Cargo.lock ./
 # Touch a stub main.rs so `cargo fetch` succeeds without the real source.
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && \
     cargo fetch --locked
 
-# Now bring in the real source. The earlier `cargo fetch` layer stays
-# cached as long as Cargo.toml + Cargo.lock are unchanged.
+# Now bring in the real source. The registry-download layer above
+# stays cached as long as Cargo.toml + Cargo.lock are unchanged.
 COPY server/src ./src
 COPY server/tests ./tests
 
@@ -46,7 +53,7 @@ RUN cargo build --release --locked
 FROM debian:${DEBIAN_VERSION} AS runtime
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user. The numeric UID/GID are stable so volume mounts

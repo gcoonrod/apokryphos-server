@@ -143,13 +143,15 @@ The fastest sanity check: hit the server's authenticated probe.
 curl -i --cacert caddy-local-ca.crt https://api.apokryphos.local/api/whoami
 
 # Expected: HTTP/2 401, body is exactly the 401 wire-image apokryphos-
-# server emits (see specs/003-fapi-dpop-auth-core/contracts/).
+# server emits (see server/tests/uniform_401_response.rs for the
+# byte-identical contract assertions).
 ```
 
 A real PUT/GET/DELETE round-trip requires obtaining a DPoP-bound access
 token, which is a multi-step flow (PKCE + PAR + DPoP proof generation).
 That's the job of the future vault SPA; for now the conformance test
-suite in `server/tests/conformance/` exercises that flow programmatically.
+suite in `tests/conformance/` (workspace root) exercises that flow
+programmatically.
 
 ### 8. Rotate the bootstrap admin
 
